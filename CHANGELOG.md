@@ -11,9 +11,10 @@
 | 项 | 状态 |
 |---|---|
 | 阶段 | **基建完成（仓库 + 目录骨架 + 开发工具链），下一步 P0+P1** |
-| 代码 | **骨架 + 工具链已就绪**：`src/*` 骨架、`test/config.test.ts`（冒烟）、TS/ESLint/Prettier/`node --test` 全绿；业务待 P0/P1 |
+| 代码 | 骨架 + 工具链 + **基础工程**：`src/core/{errors,safety}.ts`（安全护栏）、`scripts/check-boundary.mjs`、5 个测试全绿；业务待 P0/P1 |
+| 规范 | **`AGENTS.md`**（自动加载）：安全红线 / 按模块读文档 / 修改 / 测试 / 提交 / DoD |
 | 文档 | **总纲** `PLAN.md` + **共享规范** `docs/module-spec.md`（§2–§8）+ **每模块说明** `docs/modules/*`（只写模块特有）+ **任务** `docs/tasks.md`（§9）+ **决策** `docs/decisions.md`（§10–§13）+ 本 `CHANGELOG.md` |
-| Git | `main`；提交 `f88433d`(init) → `74af302`(骨架) → 本次(工具链) |
+| Git | `main`；`f88433d`(init) → `74af302`(骨架) → `55f5516`(工具链) → `e6a8b35`(文档拆分) → `3cf19c1`(模块文档) → 本次(AGENTS+基础工程) |
 | 已锁定决策 | Android 全自动 adb 无线调试；首期美团+饿了么；结算页实付为准；招行周三+美团神券基准；先 P0+P1（Mock 先行）；无线调试方案 c |
 | 环境（已实测） | WSL2 / Ubuntu **26.04.1 LTS**；Node **v24.22.0**；pnpm **12.14.0**；npm 11.19.1；**adb 未安装** |
 
@@ -218,6 +219,19 @@
 
 ---
 
+### [17] 2026-10-22 01:10–01:35 · 建立 AGENTS.md 与基础工程（含安全边界可执行化）
+- **为什么**：用户要求建立 `AGENTS.md` 和基础工程，明确**修改规范、测试要求、不能自动提交订单或付款的安全边界**。
+- **做了什么**：
+  1. **`AGENTS.md`**（DSH `dsh-agent-instructions` 自动加载，根以 `.git` 标记）：§0 安全红线（禁止下单/支付、验证码即停、不破解/不抓包、本人设备低频、隐私脱敏、宁失败不越线）、§1 按模块读文档（禁止通读整份计划）、§2 修改规范（含**类型剥离限制**：不支持参数属性/enum/namespace）、§3 测试要求（price 覆盖率≥90%、必测场景、`pnpm check` 门禁）、§4 文档维护、§5 提交规范、§6 DoD。
+  2. **基础工程**：`src/core/errors.ts`（`BusyError/StateAssertionError/NeedsHumanError/ForbiddenActionError`）、`src/core/safety.ts`（`assertTapSafe`，**程序化拦截**下单/支付点击）、`scripts/check-boundary.mjs`（**零依赖**静态校验 §4.4 分层规则 R1–R4 + 循环依赖）、`.editorconfig`。
+  3. **脚本/门禁**：`boundary`、`test:coverage`（Node 内置 coverage）；`check` 串联 `typecheck → lint → format:check → boundary → test`。
+  4. **ESLint**：新增 JS 脚本的 Node globals；TS 关闭 `no-undef`（tsc 负责）。
+  5. 同步：`docs/modules/10-core.md`（safety/errors）、`docs/modules/40-device.md`（tap 前必过护栏）、`docs/module-spec.md` §4.4（循环依赖改由脚本校验）、§4.1（类型剥离限制）、`README.md`（指向 AGENTS.md）。
+- **验证方式（均实跑）**：`pnpm check` 全绿（typecheck/lint/format/boundary/5 tests）；边界检查**负例**验证——临时在 `src/price/` import `node:fs` → R1 报错退出 1，删除后恢复通过；安全护栏 `test/safety.test.ts` 4 例（中文/英文大小写/仅 resourceId/无害标签）。
+- **更新后状态**：`AGENTS.md` 生效；安全边界**代码可执行**（非仅文档）；门禁新增边界检查；业务仍待 P0/P1。
+
+---
+
 ## 追加条目的模板（供后续每轮使用）
 
 ```markdown
@@ -231,4 +245,4 @@
 
 ---
 
-*最后更新：2026-10-22 01:10 +08:00*
+*最后更新：2026-10-22 01:35 +08:00*

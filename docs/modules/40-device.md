@@ -25,6 +25,7 @@ interface Driver {
 
 ## 实现要点（特有）
 - `adb.ts` **必须**调 `runNativeCommand('adb', argv, signal, 'hidden')`，**不得**自写 spawn/超时/取消（§2.2）。
+- **点击前强制过安全护栏**：`tap()` 内先 `assertTapSafe(sel)`（`core/safety.ts`），命中下单/支付即抛 `ForbiddenActionError`；验证码/风控 → 抛 `NeedsHumanError`。**这是红线 1/2 的落点。**
 - `mock.ts` 与 `adb.ts` **实现同一 `Driver`**，切换 `device.driver` 不改上层（§2.1 R3）。
 - `state.ts`：`StateAssertion` = `presentResourceIds/presentTexts/absentResourceIds`；失败抛 `StateAssertionError{expected, dumpPath, screenshotPath}`。
 - `recover.ts` 只处理已知干扰（升级/广告/定位/通知/加载/登录/验证码）；**验证码 → 抛 `NeedsHumanError`**（不硬闯）。
@@ -34,6 +35,7 @@ interface Driver {
 ## 本模块必须遵守的共享规则（清单）
 - 每步动作+断言+超时+恢复：§3.5.1
 - 弹窗拦截表：§3.5.2
+- 安全红线（禁下单/支付、验证码即停）：AGENTS.md §0
 - 能力探测与识别降级矩阵：§3.5.4
 - WSL2 adb 探活/重连：§8（每次任务前 `adb devices`，掉线重连 1 次）
 

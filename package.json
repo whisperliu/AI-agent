@@ -52,7 +52,9 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run test"
+    "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run boundary && pnpm run test",
+    "boundary": "node scripts/check-boundary.mjs",
+    "test:coverage": "node --experimental-test-coverage --test"
   },
   "license": "MIT"
 }

@@ -234,7 +234,7 @@ interface StateAssertion {
 | 项 | 要求 | 现状/依据 |
 |---|---|---|
 | 宿主 OS | Windows + **WSL2 (Ubuntu 26.04.1 LTS)**，与手机同一 WLAN | 已实测 |
-| Node | **v24.22.0**（ESM）；**直接执行 `.ts`**（原生类型剥离，无需编译步骤） | 已实测 `node t.ts`、`node --test t.test.ts` 均可用 |
+| Node | **v24.22.0**（ESM）；**直接执行 `.ts`**（原生类型剥离，无需编译步骤）。**仅支持"可擦除"语法**：不支持参数属性/`enum`/`namespace`（实测 `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`） | 已实测 `node t.ts`、`node --test t.test.ts` 均可用 |
 | 包管理 | **pnpm 12.14.0** | 已实测 |
 | DSH | `@deepseek-ai/dsh` **0.2.1-rc.2**；profile=`web`；peer 依赖须对齐该版本 | 已实测 |
 | 手机 | **Android 11+**（无线调试需 Android 11 及以上），开启开发者选项 | 计划前提 |
@@ -369,7 +369,7 @@ tools ──▶ task ──▶ { platform, price } ──▶ device/ocr(仅经�
 3. **`tools/*` 不直接调用 `ctx.jobs`/`ctx.storageDomain`**，只调 `task/*`（便于 Mock 替换）。
 4. **只有 `index.ts` 与 `cordis.patch.yml` 对外**；其余为内部模块，不进 `package.json` 的 `exports`（测试可经相对路径 import）。
 5. **共享类型唯一真源**：`Quote/FeeLine/Discount/Evidence/ComparisonConditions` 只在 `price/model.ts` 定义，其它模块 `import type`，禁止重复定义。
-6. 循环依赖为 **0**（`madge --circular` 或 `node --test` 的加载检查纳入 DoD）。
+6. 循环依赖为 **0**，由 `scripts/check-boundary.mjs` 静态校验（零依赖、`pnpm boundary`，已纳入 `pnpm check`）。
 
 `cordis.patch.yml` 形态（示意）：
 

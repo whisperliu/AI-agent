@@ -8,6 +8,8 @@
 | `container.ts` | 按 config 选实现、组装依赖图 | `buildContainer(ctx, config): Deps` |
 | `clock.ts` | 时间抽象（可测） | `Clock`, `SystemClock`, `FakeClock` |
 | `locks.ts` | 设备锁 / 快照单飞 | `withDeviceLock(serial, fn)`, `withSnapshotLock(hash, fn)` |
+| `safety.ts` | **安全护栏**：拦截下单/支付点击 | `assertTapSafe(target)` |
+| `errors.ts` | 跨模块错误类型 | `BusyError/StateAssertionError/NeedsHumanError/ForbiddenActionError` |
 
 ```ts
 interface Deps { driver: Driver; ocr: Ocr; clock: Clock; jobs: Jobs; storage: StorageDomain }
@@ -18,11 +20,13 @@ interface Deps { driver: Driver; ocr: Ocr; clock: Clock; jobs: Jobs; storage: St
 - `clock.ts`：生产用 `SystemClock`（内部可读 `Date.now`）；测试用 `FakeClock`（可推进），**业务禁止直接 `Date.now()`**（§2.1 R4）。
 - `locks.ts`：**薄封装** `dsh-atomic-write` 的 `withWriterLock`（wx 锁 + PID + `ESRCH` 接管），**不要**自己实现锁；锁键：设备 `device-<serial>.lock`、快照 `snapshot-<hash>.lock`（§7.7 R1）。
 - 获取锁失败/超时 → 抛 `BusyError`（上层映射 `503 BUSY`）。
+- `safety.ts`：**每次 `driver.tap` 前必须调 `assertTapSafe(target)`**；命中下单/支付（`提交订单/立即支付/…`）抛 `ForbiddenActionError`。多语言/大小写/下划线已归一，宁可误拦不可放过（AGENTS.md §0 红线 1 的程序化防线）。
 
 ## 本模块必须遵守的共享规则（清单）
 - 锁层次与顺序（设备→快照→资源）：§7.7 R1
 - 注入禁止硬编码：§2.1 R2
 - 复用 `dsh-atomic-write`：§2.2
+- 安全红线（下单/支付/验证码）：AGENTS.md §0
 
 ## 测试
 - `FakeClock` 推进使超时逻辑可确定；
