@@ -8,7 +8,7 @@ DSH 插件：在你自己的 Android 手机上打开外卖 App（美团 / 饿了
 
 ## 状态
 
-**基建阶段（脚手架 + 开发工具链已就绪）**，业务未实现。设计见 [PLAN.md](./PLAN.md)，变更见 [CHANGELOG.md](./CHANGELOG.md)。
+**基建阶段（脚手架 + 开发工具链已就绪）**，业务未实现。文档：总纲 [PLAN.md](./PLAN.md) · 模块规范 [docs/module-spec.md](./docs/module-spec.md) · 任务与验收 [docs/tasks.md](./docs/tasks.md) · 决策 [docs/decisions.md](./docs/decisions.md) · 变更 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## 环境（详见 PLAN §4.1）
 
