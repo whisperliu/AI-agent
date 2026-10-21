@@ -1,0 +1,8 @@
+node_modules
+dist
+coverage
+.pnpm-store
+.price-agent
+pnpm-lock.yaml
+*.md
+test/fixtures

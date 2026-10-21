@@ -24,9 +24,13 @@ export const Config = z.object({
   ocr: z.object({
     enabled: z.boolean().default(false),
   }),
-  platforms: z.dict(z.object({
-    enabled: z.boolean().default(false),
-    appId: z.string(),
-    priceToleranceYuan: z.number().default(1.0),
-  })).default({}),
+  platforms: z
+    .dict(
+      z.object({
+        enabled: z.boolean().default(false),
+        appId: z.string(),
+        priceToleranceYuan: z.number().default(1.0),
+      }),
+    )
+    .default({}),
 })

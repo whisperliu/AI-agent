@@ -10,10 +10,10 @@
 
 | 项 | 状态 |
 |---|---|
-| 阶段 | **基建完成（仓库 + 目录骨架），下一步 P0+P1** |
-| 代码 | **骨架已建**：`src/{core,task,platform,device,price,ocr,tools}` + `test/`，入口/配置为最小可加载骨架（业务待 P0/P1 实现） |
+| 阶段 | **基建完成（仓库 + 目录骨架 + 开发工具链），下一步 P0+P1** |
+| 代码 | **骨架 + 工具链已就绪**：`src/*` 骨架、`test/config.test.ts`（冒烟）、TS/ESLint/Prettier/`node --test` 全绿；业务待 P0/P1 |
 | 文档 | `PLAN.md` = **v0.7.0**（约 1252 行）+ 本 `CHANGELOG.md` |
-| Git | 仓库已初始化（`main`，初始提交 `f88433d`，远端 `origin`）；本次提交建立基线 |
+| Git | `main`；提交 `f88433d`(init) → `74af302`(骨架) → 本次(工具链) |
 | 已锁定决策 | Android 全自动 adb 无线调试；首期美团+饿了么；结算页实付为准；招行周三+美团神券基准；先 P0+P1（Mock 先行）；无线调试方案 c |
 | 环境（已实测） | WSL2 / Ubuntu **26.04.1 LTS**；Node **v24.22.0**；pnpm **12.14.0**；npm 11.19.1；**adb 未安装** |
 
@@ -179,6 +179,20 @@
 
 ---
 
+### [14] 2026-10-22 00:08–00:30 · 配置开发工具链（TypeScript / ESLint / Prettier / 测试）
+- **为什么**：用户要求配置 TS、ESLint、测试框架与格式化工具，作为写业务前的质量基座。
+- **做了什么**：
+  1. **TypeScript**：`tsconfig.json`（`noEmit`、`allowImportingTsExtensions`、strict、`noUncheckedIndexedAccess`、`types:["node"]`）；`typescript@5.9.3`（**必须 5.x**：typescript-eslint 8 要求 `<6.1`，而 latest 是 7.x）。
+  2. **ESLint**：`eslint.config.js` flat config（`@eslint/js` + `typescript-eslint` recommended + `eslint-config-prettier` 兜底）；规则含 `consistent-type-imports`、`no-unused-vars(argsIgnorePattern:'_'`)、`eqeqeq`。
+  3. **Prettier**：`.prettierrc.json`（无分号/单引号/`printWidth:100`/LF）+ `.prettierignore`；格式化了 `src/*`、`cordis.patch.yml`。
+  4. **测试**：内置 `node --test`（不引 jest/vitest，`@types/node` 提供 `node:test` 类型）；加冒烟测试 `test/config.test.ts`（验 `Config` 默认值）。
+  5. **脚本**：`typecheck/lint/lint:fix/format/format:check/test/test:watch/check`，其中 `check` 串联四道门禁。
+  6. **环境适配**：本机 `$HOME` 只读、pnpm 12 的 store 操作锁写 `XDG_RUNTIME_DIR`（`/run/user/…` 只读）。添加 `.npmrc`(registry) + `pnpm-workspace.yaml`(`storeDir:.pnpm-store`、`strictDepBuilds:false`)；安装需 `HOME=$PWD/.home XDG_RUNTIME_DIR=$PWD/.run pnpm install`（README 已注明）。`.gitignore` 忽略 `.pnpm-store/.home/.run/.npm-cache` 等。
+- **验证方式（均实跑）**：`tsc --noEmit` 通过；`eslint .` 0 问题；`prettier --check .` 全通过；`node --test` 1 pass；`pnpm run check` 四道门禁全绿。安装：`pnpm install` 成功（`@eslint/js@10.0.1`/`eslint@10.13.0`/`prettier@3.9.10`/`typescript@5.9.3`/`typescript-eslint@8.72.0`）。
+- **更新后状态**：工具链可用；`pnpm check` 绿；业务实现仍待 P0/P1。
+
+---
+
 ## 追加条目的模板（供后续每轮使用）
 
 ```markdown
@@ -192,4 +206,4 @@
 
 ---
 
-*最后更新：2026-10-22 00:08 +08:00*
+*最后更新：2026-10-22 00:30 +08:00*

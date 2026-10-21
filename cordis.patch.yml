@@ -9,7 +9,7 @@
       name: 'dsh-price-agent'
       config:
         device:
-          driver: mock            # mock | adb  (P1 starts on mock; §2.1 R3)
+          driver: mock # mock | adb  (P1 starts on mock; §2.1 R3)
           serial: auto
         task:
           stepTimeoutMs: 8000
@@ -20,7 +20,7 @@
           ttlMinutes: 10
           retainMax: 50
         ocr:
-          enabled: false          # P1: MockOcr only
+          enabled: false # P1: MockOcr only
         platforms:
           meituan:
             enabled: true

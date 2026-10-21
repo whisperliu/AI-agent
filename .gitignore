@@ -1,6 +1,15 @@
 # dependencies
 node_modules/
+
+# pnpm local store/cache + sandbox HOME/XDG redirection (see README "Dev environment")
 .pnpm-store/
+.pnpm-cache/
+.pnpm-state/
+.npm-cache/
+.home/
+.run/
+.tmp/
+.xdg/
 
 # local runtime state (never commit: evidence images, ledger, task records)
 .price-agent/

@@ -8,7 +8,7 @@ DSH 插件：在你自己的 Android 手机上打开外卖 App（美团 / 饿了
 
 ## 状态
 
-**方案阶段（v0.7.0）**，代码尚未实现。完整设计见 [PLAN.md](./PLAN.md)，变更见 [CHANGELOG.md](./CHANGELOG.md)。
+**基建阶段（脚手架 + 开发工具链已就绪）**，业务未实现。设计见 [PLAN.md](./PLAN.md)，变更见 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## 环境（详见 PLAN §4.1）
 
@@ -32,13 +32,28 @@ src/
 test/             node --test 单测 + fixtures
 ```
 
-## 开发
+## 开发工具链
+
+| 工具 | 命令 | 说明 |
+|---|---|---|
+| 类型检查 | `pnpm typecheck` | `tsc --noEmit`（Node 直接跑 `.ts`，tsc 只查类型） |
+| 代码检查 | `pnpm lint` / `pnpm lint:fix` | ESLint 10 flat config + typescript-eslint 8 |
+| 格式化 | `pnpm format` / `pnpm format:check` | Prettier 3 |
+| 测试 | `pnpm test` / `pnpm test:watch` | 内置 `node --test`（不引 jest/vitest） |
+| 全量门禁 | `pnpm check` | typecheck → lint → format:check → test |
+
+### 开发环境注意（本机沙箱）
+
+本机 `$HOME` 只读，pnpm 需要可写的 store/lock 目录，故：
 
 ```bash
+# 仓库内已提供 .npmrc / pnpm-workspace.yaml（storeDir 指向仓库内 .pnpm-store）
+export HOME="$PWD/.home"
+export XDG_RUNTIME_DIR="$PWD/.run"   # pnpm 12 的 store 操作锁放这里
 pnpm install
-pnpm test          # node --test
-pnpm typecheck     # tsc --noEmit
 ```
+
+若在正常（HOME 可写）的开发机上，直接 `pnpm install` 即可，无需上面两个变量。
 
 ## 许可
 

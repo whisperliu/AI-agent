@@ -1,0 +1,4 @@
+# pnpm 12 project settings (kept in-repo; HOME is read-only in this sandbox).
+storeDir: .pnpm-store
+strictDepBuilds: false
+# tesseract.js's postinstall is only an opencollective banner; not required at runtime.
