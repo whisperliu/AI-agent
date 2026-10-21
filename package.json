@@ -54,7 +54,7 @@
     "format:check": "prettier --check .",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run boundary && pnpm run test",
     "boundary": "node scripts/check-boundary.mjs",
-    "test:coverage": "node --experimental-test-coverage --test"
+    "test:coverage": "node --experimental-test-coverage --test-coverage-include='src/price/*.ts' --test-coverage-lines=90 --test-coverage-branches=70 --test-coverage-functions=80 --test"
   },
   "license": "MIT"
 }

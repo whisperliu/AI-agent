@@ -10,8 +10,8 @@
 
 | 项 | 状态 |
 |---|---|
-| 阶段 | **基建完成（仓库 + 目录骨架 + 开发工具链），下一步 P0+P1** |
-| 代码 | 骨架 + 工具链 + **基础工程**：`src/core/{errors,safety}.ts`（安全护栏）、`scripts/check-boundary.mjs`、5 个测试全绿；业务待 P0/P1 |
+| 阶段 | **P0 完成（price 纯核心）**，下一步 P1（插件骨架 + 异步任务 + Mock） |
+| 代码 | **P0 完成**：`src/price/*`（模型/两层校验/引擎/相似度/证据）已实现，`src/core/{errors,safety}.ts`，`scripts/check-boundary.mjs`；36 测试、price 行覆盖 95.5%；P1 待做 |
 | 规范 | **`AGENTS.md`**（自动加载）：安全红线 / 按模块读文档 / 修改 / 测试 / 提交 / DoD |
 | 文档 | **总纲** `PLAN.md` + **共享规范** `docs/module-spec.md`（§2–§8）+ **每模块说明** `docs/modules/*`（只写模块特有）+ **任务** `docs/tasks.md`（§9）+ **决策** `docs/decisions.md`（§10–§13）+ 本 `CHANGELOG.md` |
 | Git | `main`；`f88433d`(init) → `74af302`(骨架) → `55f5516`(工具链) → `e6a8b35`(文档拆分) → `3cf19c1`(模块文档) → 本次(AGENTS+基础工程) |
@@ -232,6 +232,19 @@
 
 ---
 
+### [18] 2026-10-22 01:35–02:10 · P0：price 纯核心 + 测试（覆盖率达标）
+- **为什么**：按 `docs/tasks.md` 的 P0 开工——实现比价纯核心（双口径、四态、两层校验、等价分组）并达成 DoD。
+- **做了什么**（仅 `src/price/*`，严格遵守 §4.4 纯核心：只依赖 `zod`）：
+  1. `model.ts`：类型唯一真源（`Quote/FeeLine/Discount/OptionalSaving/Evidence/ComparisonConditions/CompareResult` + 引擎输入 `QuoteDraft/EvidenceDraft`）。
+  2. `schema.ts`：zod4 校验；`superRefine` 交叉校验 `arithmetic`/`balanced` 是否诚实、`effectivePrice` 是否重复扣；导出 `expectedPayable/deductibleSavings/toleranceFor`。
+  3. `engine.ts`：`assess()`（两层结论 + §6.3.1 矩阵）、`priceQuote()`（`effectivePrice = payable − Σ(verified && !已含)`）、`compare()`（按等价分组；**cheapest 只在单一可比组内取，禁止跨组混排**）。
+  4. `similarity.ts`（门店/商品相似度 + `isSameMeal` 含套餐组成/数量/规格）、`evidence.ts`（TTL/完整性/缺失说明）。
+- **关键修复（实现中发现的设计缺陷）**：初版 `cheapest` 取"所有可比组内全局最小"——这正是 §6.2/§6.4 禁止的**跨组混排**。已改为"仅当存在唯一可比组时才在组内取最小；多组则分组呈现、不选全局最低"。
+- **验证方式（实跑）**：`pnpm check` 全绿（typecheck/lint/format/**boundary 9 files**/36 tests）；`pnpm test:coverage` = `src/price` **行 95.51% / 分支 76.23% / 函数 92.31%**（阈值 line≥90/branch≥70/funcs≥80 通过）。测试覆盖：`¥28.9→¥289`、**双错平账**（算平但 OCR→medium→needsConfirm）、**重复扣**（verified 但 alreadyIncluded 不重复扣）、**推测当可用**（presumed 不减价）、**不可比分组**、过期证据排除、`deviatedConditions` 强制不可比、相似度/证据 TTL。
+- **更新后状态**：P0 完成，`src/price` 可用且被测试锁定；下一步 P1（插件骨架 + 异步任务 + Mock）。
+
+---
+
 ## 追加条目的模板（供后续每轮使用）
 
 ```markdown
@@ -245,4 +258,4 @@
 
 ---
 
-*最后更新：2026-10-22 01:35 +08:00*
+*最后更新：2026-10-22 02:10 +08:00*
