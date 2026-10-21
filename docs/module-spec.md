@@ -340,6 +340,8 @@ dsh-plugin-price-agent/
 
 ### 4.4 ★模块边界（Module Boundaries，可执行约束）
 
+> **按模块实现时**：只读该模块的说明文档 `docs/modules/NN-*.md`（只写模块特有内容）；本节的边界/契约是**共享规则**，供查证。各模块文档见 [`docs/modules/README.md`](./modules/README.md)。
+
 **分层（自上而下，只允许向下依赖）**：
 ```
 tools ──▶ task ──▶ { platform, price } ──▶ device/ocr(仅经抽象接口)

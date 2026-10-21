@@ -9,7 +9,8 @@
 | 文档 | 定位 | 内容（章节） |
 |---|---|---|
 | **PLAN.md**（本文件） | **项目总纲**：目标、结论、需求、文档地图、状态、怎么用 | §0 结论 / §1 需求 |
-| [`docs/module-spec.md`](docs/module-spec.md) | **模块规范**（What & How，Normative） | §2 架构 · §3 难点 · §4 环境/技术栈/目录/边界 · §5 配置策略 · §6 数据模型 · §7 异步任务 · §8 WSL2 |
+| [`docs/module-spec.md`](docs/module-spec.md) | **模块规范**（What & How，Normative，共享/跨模块） | §2 架构 · §3 难点 · §4 环境/技术栈/目录/边界 · §5 配置策略 · §6 数据模型 · §7 异步任务 · §8 WSL2 |
+| [`docs/modules/`](docs/modules/README.md) | **每模块说明**（只写模块特有内容；**开发某模块只读它**） | 00 入口 · 05 配置 · 10 core · 20 task · 30 platform · 40 device · 50 price · 60 ocr · 70 tools |
 | [`docs/tasks.md`](docs/tasks.md) | **开发任务与验收**（Who/When，DoD） | §9 分阶段计划 P0–P5 + 验收标准 |
 | [`docs/decisions.md`](docs/decisions.md) | **决策记录**（Why，ADR-lite） | §10 风险合规 · §11 已锁定决策 · §12 为何不用官方 API · §13 版本摘要 |
 | [`CHANGELOG.md`](CHANGELOG.md) | **全量变更时间线**（每次改动的 Why/What/State） | 逐条历史 |
@@ -42,9 +43,9 @@
 ## 怎么用这套文档
 
 1. **新人 / 评审**：先读本文件 §0 结论 → 再按需跳 `docs/module-spec.md`。
-2. **实现**：以 `docs/module-spec.md` 为规范（尤其 §4.4 模块边界、§6 数据模型、§7 幂等/并发）；用 `docs/tasks.md` 的 DoD 自检。
+2. **实现（按模块）**：**只读** `docs/modules/NN-*.md` 中对应那一份（+ 其"共享规则清单"里点到的 §号）。**不要整份重读 `module-spec.md`**，它是共享/跨模块规范，供查证而非通读。
 3. **查"为什么"**：看 `docs/decisions.md` 与 `CHANGELOG.md`。
-4. **改文档**：改对应文件即可；**不要改章节编号**（跨文件引用依赖它）。
+4. **改文档**：模块内的东西改 `docs/modules/*`；跨模块契约（§6 数据模型、§7 异步/幂等/并发、§4.4 边界）才改 `module-spec.md`；**不要改章节编号**。
 
 ---
 
