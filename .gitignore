@@ -1,0 +1,21 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# local runtime state (never commit: evidence images, ledger, task records)
+.price-agent/
+
+# build / test artifacts
+dist/
+coverage/
+*.tsbuildinfo
+*.log
+
+# fixtures: keep only redacted, small samples; ignore raw captures
+test/fixtures/**/*.raw.png
+test/fixtures/**/*.raw.xml
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/

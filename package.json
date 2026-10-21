@@ -1,0 +1,45 @@
+{
+  "name": "dsh-price-agent",
+  "version": "0.0.0",
+  "private": true,
+  "description": "DSH plugin: compare takeout prices across apps on your own Android phone (honest 到手价)",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "dsh": "0.2.1-rc.2"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
+    "@deepseek-ai/cordis": "~4.0.5"
+  },
+  "dependencies": {
+    "zod": "4.4.3",
+    "@deepseek-ai/schemastery": "~3.18.5"
+  },
+  "optionalDependencies": {
+    "tesseract.js": "^5",
+    "fast-xml-parser": "^4"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/node": "^24.0.0"
+  },
+  "scripts": {
+    "test": "node --test",
+    "typecheck": "tsc --noEmit"
+  },
+  "license": "MIT"
+}

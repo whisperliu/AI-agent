@@ -1,0 +1,32 @@
+# dsh-price-agent —— plugin injection layer.
+# Applied after bundle layers, before the profile's own cordis.patch.yml.
+# Registers the price_agent tool plugin into the profile.
+#
+# NOTE: P1 will fill the real config. Fields below follow PLAN §4.3 / §5.1.
+
+- insert:
+    - id: price-agent
+      name: 'dsh-price-agent'
+      config:
+        device:
+          driver: mock            # mock | adb  (P1 starts on mock; §2.1 R3)
+          serial: auto
+        task:
+          stepTimeoutMs: 8000
+          pageTimeoutMs: 20000
+          taskTimeoutMs: 90000
+          idempotencyTtlMinutes: 30
+        evidence:
+          ttlMinutes: 10
+          retainMax: 50
+        ocr:
+          enabled: false          # P1: MockOcr only
+        platforms:
+          meituan:
+            enabled: true
+            appId: com.sankuai.meituan
+            priceToleranceYuan: 1.0
+          eleme:
+            enabled: true
+            appId: me.ele
+            priceToleranceYuan: 1.0
