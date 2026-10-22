@@ -14,10 +14,10 @@
 | 模型 | `workbuddy2api/deepseek-v4.1-flash`（经 `dsh-magpie-connect`, baseUrl `127.0.0.1:3425`） |
 | GUI | `http://127.0.0.1:3080`（profile `web`） |
 | 工作目录 | `/home/liuqiaoqiao/dsh-plugin-price-agent` |
-| 时间跨度 | 2026-10-22 08:14 → 13:30（含跨会话空档） |
+| 时间跨度 | 2026-10-22 08:14 → 15:08（含跨会话空档） |
 | 起始基线 | P0 已提交（`43d6ea0`），P1 未开始 |
-| 结束状态 | **P1 收工 + P2 真机通道代码完成**（轮次13）；真机 §8.4 PASS 待用户本机连手机判定 |
-| 期间提交 | `970d2fb`（P1）、`d43ac0d`（P1 收尾快照）；P2 未提交 |
+| 结束状态 | **P1 收工 + P2 真机通道代码完成并提交**；真机 §8.4 PASS 待用户本机连手机判定（**会话收尾 15:08**） |
+| 期间提交 | `970d2fb`（P1）、`d43ac0d`（P1 收尾快照）、`251c4e6`（安全修复）、`e34301c`（P2 真机通道，已提交） |
 
 ---
 
@@ -38,6 +38,7 @@
 | 11 | 13:08 | 「当前会话结束时追加这份文件」 | 说明无"会话结束钩子"；一度改为每轮追加（该策略随后被用户更正） | 本文件更新（轮次11） | — | ✅ |
 | 12 | 13:11 | 「收尾，P1收工。」 | 按约定做**最终快照追加**并提交 | 本文件最终版 | 门禁绿 | ✅ |
 | 13 | 13:12 | 「下一步P2真机」 | 读 P2 文档/device 代码；装 adb 到工作区；实现 adb 真机驱动/连接重连/能力探测/弹窗恢复/截图留证/步骤原语；新增 `probe`/`selfCheck` 工具动作与 §8.4/演练脚本；**修 `assertTapSafe` 漏检 `text` 的红线漏洞**；补离线测试与文档 | device/{adb,uixml,probe,recover,pageDetect,steps,capture}、tools/task 扩展、2 脚本、device-p2 测试 | `pnpm check` 82/82；coverage 95.51%；无真机可读报错 | ✅（真机 PASS 待用户连机） |
+| 14 | 15:08 | 「收尾」 | 按约定做**最终快照**：时间跨度→15:08、结束状态、期间提交（P2 已提交）、追加本轮、JSON/页脚 | 本文件最终版 | `pnpm check` 82/82 绿 | ✅ |
 
 > 说明：上述"人类可见轮次"已把会话中穿插的**系统时间采样提醒 / job 完成通知 / 工具被打断后重试**等非人类消息折叠掉，只保留实际的人类请求与对应的实质产出。
 
@@ -105,6 +106,11 @@
 - **验证**：`pnpm check` 82/82；`device-p2.test.ts` 23 tests 离线全绿；无设备时脚本/工具给出可读 FAIL。
 - **边界**：真机 §8.4 PASS 需用户本机连手机运行脚本判定；真实坐标/页面契约留 P3 校准。
 
+### 轮次 14 · 收尾（15:08）
+- **意图**：结束会话。
+- **处理**：按约定做**最终快照**——更新时间跨度(→15:08)/结束状态、更正"期间提交"（P2 已提交）、追加本轮、更新 JSON 与页脚，并提交。
+- **结论**：本次会话收尾；**P0 / P1 / P2(代码) 全部已提交**（HEAD `e34301c`）；P2 真机 §8.4 PASS 待用户本机连机；下一步 P3。
+
 ### 轮次 10 · 记录对话
 - **产物**：本文件。
 
@@ -156,7 +162,7 @@
     "cwd": "/home/liuqiaoqiao/dsh-plugin-price-agent",
     "tz": "Asia/Shanghai",
     "start": "2026-10-22T08:14:19+08:00",
-    "end": "2026-10-22T13:30:00+08:00",
+    "end": "2026-10-22T15:08:00+08:00",
     "baseline_commit": "43d6ea0",
     "final_commit": "d43ac0d (P1); P2 未提交"
   },
@@ -173,8 +179,8 @@
     {"n":10,"at":"13:05","user":"记录每一轮对话","intent":"metadata tracking doc","result":"本文件","verify":"-","status":"ok"},
     {"n":11,"at":"13:08","user":"当前会话结束时追加这份文件","intent":"append-at-session-end","result":"策略更正为收尾时追加","verify":"-","status":"ok"},
     {"n":12,"at":"13:11","user":"收尾，P1收工。","intent":"final-snapshot","result":"最终快照并提交","verify":"gate green","status":"ok"},
-    {"n":13,"at":"13:12","user":"下一步P2真机","intent":"build P2 real-device channel","result":"adb 驱动/连接重连/能力探测/弹窗恢复/截图留证/probe+selfCheck/演练脚本 + 修 assertTapSafe 漏检 text","verify":"pnpm check 82/82; coverage 95.51%; 无设备可读报错","status":"ok(真机PASS待用户连机)"}
-  ],
+    {"n":13,"at":"13:12","user":"下一步P2真机","intent":"build P2 real-device channel","result":"adb 驱动/连接重连/能力探测/弹窗恢复/截图留证/probe+selfCheck/演练脚本 + 修 assertTapSafe 漏检 text","verify":"pnpm check 82/82; coverage 95.51%; 无设备可读报错","status":"ok(真机PASS待用户连机)"},
+    {"n":14,"at":"15:08","user":"收尾","intent":"final-snapshot","result":"时间跨度/结束状态/期间提交更正 + 追加本轮 + JSON/页脚","verify":"pnpm check 82/82","status":"ok"}
   "fixes": [
     {"topic":"job owner","file":"src/core/jobs-adapter.ts","detail":"owner=exec.agent.id 贯通"},
     {"topic":"idempotency stuck","file":"src/task/lifecycle.ts","detail":"jobs.start 失败回滚+force 重跑"},
@@ -192,4 +198,4 @@
 
 ---
 
-*会话快照：2026-10-22 13:11 P1 收工 → 13:30 追加轮次13（P2 真机通道代码完成，真机 §8.4 PASS 待用户连机判定）。*
+*会话收尾快照：2026-10-22 15:08 · P0/P1/P2(代码) 全部已提交（HEAD `e34301c`）；P2 真机 §8.4 PASS 待用户本机连机；下一步 P3。*
