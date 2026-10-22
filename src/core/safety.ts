@@ -40,8 +40,16 @@ export function looksForbidden(label: string | undefined | null): boolean {
 /**
  * Throw if the intended tap target is an order/payment control.
  * Call this immediately before every driver.tap in the automation flow.
+ *
+ * Inspects `resourceId`, `label`/content-desc and `text`, because a tap
+ * selector may target a control by any of them (a gap found in P2: a selector
+ * expressed only as `{ text: '提交订单' }` must also be blocked).
  */
-export function assertTapSafe(target: { label?: string; resourceId?: string }): void {
-  const hay = `${target.label ?? ''} ${target.resourceId ?? ''}`
+export function assertTapSafe(target: {
+  label?: string
+  resourceId?: string
+  text?: string
+}): void {
+  const hay = `${target.label ?? ''} ${target.resourceId ?? ''} ${target.text ?? ''}`
   if (looksForbidden(hay)) throw new ForbiddenActionError(hay.trim())
 }

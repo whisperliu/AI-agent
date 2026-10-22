@@ -30,3 +30,10 @@ test('allows harmless navigation labels', () => {
     assert.doesNotThrow(() => assertTapSafe({ label }))
   }
 })
+
+test('blocks when only text selector matches (P2 regression: { text: "提交订单" })', () => {
+  assert.throws(() => assertTapSafe({ text: '提交订单' }), ForbiddenActionError)
+  assert.throws(() => assertTapSafe({ text: '立即支付' }), ForbiddenActionError)
+  // 正常导航文案不误拦
+  assert.doesNotThrow(() => assertTapSafe({ text: '去结算' }))
+})
