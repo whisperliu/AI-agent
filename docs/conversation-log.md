@@ -12,7 +12,7 @@
 | 模型 | `workbuddy2api/deepseek-v4.1-flash`（经 `dsh-magpie-connect`, baseUrl `127.0.0.1:3425`） |
 | GUI | `http://127.0.0.1:3080`（profile `web`） |
 | 工作目录 | `/home/liuqiaoqiao/dsh-plugin-price-agent` |
-| 时间跨度 | 2026-10-22 08:14 → 2026-10-22 13:05（约 4h51m，含跨会话空档） |
+| 时间跨度 | 2026-10-22 08:14 → 13:08（持续中，每轮追加；约 4h54m） |
 | 起始基线 | P0 已提交（`43d6ea0`），P1 未开始 |
 | 结束状态 | **P0 + P1 完成并提交（`970d2fb`）**，且已在现网 `:3080` 真机 GUI 内实跑通过 |
 | 期间提交 | `970d2fb feat(plugin): P1 插件骨架 + 异步任务 + Mock 全链路` |
@@ -33,6 +33,7 @@
 | 8 | 13:01 | 「用 price_agent 比价 香叶 烤鸭饭」 | 在 :3080 真实调用：旧记录 failed→`force=true` 重跑→getResult 出分组比价表 | 真机结果 + 落盘证据 | 存储 completed；结果文件 checksum ok；meituan 26.9 | ✅ |
 | 9 | 13:03 | 「git commit」 | 清理运行时目录、跑门禁、暂存 56 文件、Conventional Commit 提交 | 提交 `970d2fb` | 提交前 56/56 绿；工作树干净 | ✅ |
 | 10 | 13:05 | 「把我们的每一轮对话记录下来…」 | 生成本文件 `docs/conversation-log.md` | 本记录 | — | ✅ |
+| 11 | 13:08 | 「当前会话结束时追加这份文件」 | 说明无真正"会话结束钩子"；改为**每轮追加**，文件始终最新；本轮已追加 | 本文件更新（轮次11） | — | ✅ |
 
 > 说明：上述"人类可见轮次"已把会话中穿插的**系统时间采样提醒 / job 完成通知 / 工具被打断后重试**等非人类消息折叠掉，只保留实际的人类请求与对应的实质产出。
 
@@ -87,6 +88,11 @@
 ### 轮次 10 · 记录对话
 - **产物**：本文件。
 
+### 轮次 11 · 当前会话结束时追加这份文件
+- **意图**：希望会话结束时把本文件补全。
+- **处理**：向用户说明——本 Agent 没有可执行的"会话终止瞬间"回调；因此采取**每轮追加**策略，保证文件在任一轮结束时都是最新。本轮已追加。
+- **说明**：若需要"最后一刻"的最终快照，请在结束前发一条收尾消息，我会做最后一次追加+提交。
+
 ---
 
 ## 3. 关键修复与决策（贯穿本轮）
@@ -122,7 +128,7 @@
     "cwd": "/home/liuqiaoqiao/dsh-plugin-price-agent",
     "tz": "Asia/Shanghai",
     "start": "2026-10-22T08:14:19+08:00",
-    "end": "2026-10-22T13:05:00+08:00",
+    "end": "2026-10-22T13:08:00+08:00 (rolling; appended per turn)",
     "baseline_commit": "43d6ea0",
     "final_commit": "970d2fb"
   },
@@ -136,7 +142,8 @@
     {"n":7,"at":"~12:54","user":"方式A装好重启了","intent":"verify loaded + fix bugs","result":"owner 修复 + 幂等回滚 + force","verify":"pnpm check 56/56 + jobs-owner 测试","status":"ok"},
     {"n":8,"at":"13:01","user":"用 price_agent 比价 香叶 烤鸭饭","intent":"real run in GUI","result":"meituan 26.9 < eleme 27.0","verify":"storage completed + checksum ok","status":"ok"},
     {"n":9,"at":"13:03","user":"git commit","intent":"commit","result":"970d2fb (56 files)","verify":"pre-commit 56/56; tree clean","status":"ok"},
-    {"n":10,"at":"13:05","user":"记录每一轮对话","intent":"metadata tracking doc","result":"本文件","verify":"-","status":"ok"}
+    {"n":10,"at":"13:05","user":"记录每一轮对话","intent":"metadata tracking doc","result":"本文件","verify":"-","status":"ok"},
+    {"n":11,"at":"13:08","user":"当前会话结束时追加这份文件","intent":"append-at-session-end","result":"改为每轮追加；本轮已追加","verify":"-","status":"ok"}
   ],
   "fixes": [
     {"topic":"job owner","file":"src/core/jobs-adapter.ts","detail":"owner=exec.agent.id 贯通"},
@@ -152,4 +159,4 @@
 
 ---
 
-*记录生成：2026-10-22 13:05 +08:00 · 由会话内 AI 依据实际对话与命令输出整理*
+*最后追加：2026-10-22 13:08 +08:00 · 采用"每轮追加"策略，文件随每轮更新*
