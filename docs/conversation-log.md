@@ -14,9 +14,9 @@
 | 模型 | `workbuddy2api/deepseek-v4.1-flash`（经 `dsh-magpie-connect`, baseUrl `127.0.0.1:3425`） |
 | GUI | `http://127.0.0.1:3080`（profile `web`） |
 | 工作目录 | `/home/liuqiaoqiao/dsh-plugin-price-agent` |
-| 时间跨度 | 2026-10-22 08:14 → 13:08（持续中，每轮追加；约 4h54m） |
+| 时间跨度 | 2026-10-22 08:14 → 13:11（约 4h57m，含跨会话空档） |
 | 起始基线 | P0 已提交（`43d6ea0`），P1 未开始 |
-| 结束状态 | **P0 + P1 完成并提交（`970d2fb`）**，且已在现网 `:3080` 真机 GUI 内实跑通过 |
+| 结束状态 | **P1 收工（用户 13:11 收尾）**；P0+P1 已提交（P1=`970d2fb`），现网 `:3080` 实跑通过 |
 | 期间提交 | `970d2fb feat(plugin): P1 插件骨架 + 异步任务 + Mock 全链路` |
 
 ---
@@ -36,6 +36,7 @@
 | 9 | 13:03 | 「git commit」 | 清理运行时目录、跑门禁、暂存 56 文件、Conventional Commit 提交 | 提交 `970d2fb` | 提交前 56/56 绿；工作树干净 | ✅ |
 | 10 | 13:05 | 「把我们的每一轮对话记录下来…」 | 生成本文件 `docs/conversation-log.md` | 本记录 | — | ✅ |
 | 11 | 13:08 | 「当前会话结束时追加这份文件」 | 说明无"会话结束钩子"；一度改为每轮追加（该策略随后被用户更正） | 本文件更新（轮次11） | — | ✅ |
+| 12 | 13:11 | 「收尾，P1收工。」 | 按约定做**最终快照追加**并提交 | 本文件最终版 | 门禁绿 | ✅ |
 
 > 说明：上述"人类可见轮次"已把会话中穿插的**系统时间采样提醒 / job 完成通知 / 工具被打断后重试**等非人类消息折叠掉，只保留实际的人类请求与对应的实质产出。
 
@@ -95,6 +96,11 @@
 - **处理**：向用户说明——本 Agent 没有可执行的"会话终止瞬间"回调；因此采取**每轮追加**策略，保证文件在任一轮结束时都是最新。本轮已追加。
 - **说明**：若需要"最后一刻"的最终快照，请在结束前发一条收尾消息，我会做最后一次追加+提交。
 
+### 轮次 12 · 收尾，P1 收工
+- **意图**：结束会话，P1 阶段收工。
+- **处理**：按约定做**最终快照**：补全时间跨度/结束状态、追加本轮、更新 JSON 元数据与页脚，并提交一次。
+- **结论**：本次会话以 **P1 完成**收尾；P2 真机（adb）留待后续。
+
 ---
 
 ## 3. 关键修复与决策（贯穿本轮）
@@ -130,7 +136,7 @@
     "cwd": "/home/liuqiaoqiao/dsh-plugin-price-agent",
     "tz": "Asia/Shanghai",
     "start": "2026-10-22T08:14:19+08:00",
-    "end": "pending: 最终追加由用户收尾消息触发",
+    "end": "2026-10-22T13:11:00+08:00",
     "baseline_commit": "43d6ea0",
     "final_commit": "970d2fb"
   },
@@ -145,7 +151,8 @@
     {"n":8,"at":"13:01","user":"用 price_agent 比价 香叶 烤鸭饭","intent":"real run in GUI","result":"meituan 26.9 < eleme 27.0","verify":"storage completed + checksum ok","status":"ok"},
     {"n":9,"at":"13:03","user":"git commit","intent":"commit","result":"970d2fb (56 files)","verify":"pre-commit 56/56; tree clean","status":"ok"},
     {"n":10,"at":"13:05","user":"记录每一轮对话","intent":"metadata tracking doc","result":"本文件","verify":"-","status":"ok"},
-    {"n":11,"at":"13:08","user":"当前会话结束时追加这份文件","intent":"append-at-session-end","result":"改为每轮追加；本轮已追加","verify":"-","status":"ok"}
+    {"n":11,"at":"13:08","user":"当前会话结束时追加这份文件","intent":"append-at-session-end","result":"策略更正为收尾时追加","verify":"-","status":"ok"},
+    {"n":12,"at":"13:11","user":"收尾，P1收工。","intent":"final-snapshot","result":"最终快照并提交","verify":"gate green","status":"ok"}
   ],
   "fixes": [
     {"topic":"job owner","file":"src/core/jobs-adapter.ts","detail":"owner=exec.agent.id 贯通"},
@@ -161,4 +168,4 @@
 
 ---
 
-*记录策略：仅在用户"收尾消息"时做最终追加 · 当前最后编辑：2026-10-22 13:09 +08:00*
+*会话收尾快照：2026-10-22 13:11 +08:00 · 状态：P1 收工（P0+P1 已提交，现网 :3080 实跑通过）*
