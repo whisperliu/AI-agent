@@ -5,22 +5,24 @@
 ## 子文件职责
 | 文件 | 职责 | 公开 API |
 |---|---|---|
-| `types.ts` | 平台策略契约（唯一真源） | `PlatformStrategy` 接口 |
-| `router.ts` | 选择本次参与比价的平台 | `select(config): PlatformId[]` |
-| `meituan.ts` / `eleme.ts` | 具体平台策略 | `export const meituan: PlatformStrategy` |
-| `selectors/*` | 控件选择器集中登记 | 按页面分组的 selectors |
+| `types.ts` | 平台策略契约（唯一真源） | `PlatformStrategy`, `RawQuoteFacts` |
+| `router.ts` | 选择本次参与比价的平台 | `selectPlatforms(config, requested?)`, `knownPlatforms()` |
+| `meituan.ts` / `eleme.ts` | 具体平台策略 | `export const meituan/eleme: PlatformStrategy` |
+| `extract.ts` | 结算页 dump → 原始事实 | `extractSettleFacts`, `enterViaOpenTag`, `SETTLE_ANCHOR` |
+| `xml.ts` | uiautomator XML 最小解析（零依赖） | `parseNodes/textOf/hasResourceId` |
+| `selectors/*` | 控件选择器集中登记 | `GENERIC_SETTLE_SELECTORS` |
 
 ```ts
 interface PlatformStrategy {
   id: string
   appId: string
-  openApp(d: Driver): Promise<void>
-  search(d: Driver, q: string): Promise<void>
-  enterSettlePage(d: Driver, c: ComparisonConditions): Promise<Evidence>
-  settleAnchor: string           // 结算页 anchorResourceId
-  selectors: Record<string, UiSelector>
+  settleAnchor: string                 // 结算页 anchorResourceId
+  selectors: Record<string, string>
+  enterSettlePage(d: Driver, c: ComparisonConditions): Promise<RawQuoteFacts>
 }
 ```
+
+> 边界：platform 只 import `device/driver.ts` 接口类型，**不** import 设备实现；XML 解析放 `xml.ts`（不去 import `device/*`）。
 
 ## 实现要点（特有）
 - **一个平台 = 一个文件**；新增平台只加文件 + 在 `router` 注册，不改他人。

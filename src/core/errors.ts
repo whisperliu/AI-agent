@@ -41,6 +41,28 @@ export class NeedsHumanError extends Error {
 }
 
 /**
+ * 同幂等键但输入快照不同（同键异参）→ 上层映射 `409 IDEMPOTENCY_KEY_REUSED`（§7.6 R3）。
+ */
+export class IdempotencyConflictError extends Error {
+  override readonly name = 'IdempotencyConflictError'
+  readonly key: string
+  constructor(key: string) {
+    super(`idempotency key reused with a different snapshot: ${key}`)
+    this.key = key
+  }
+}
+
+/** 任务不存在（未知 taskId）→ 上层提示"任务不存在"。 */
+export class TaskNotFoundError extends Error {
+  override readonly name = 'TaskNotFoundError'
+  readonly taskId: string
+  constructor(taskId: string) {
+    super(`task not found: ${taskId}`)
+    this.taskId = taskId
+  }
+}
+
+/**
  * 试图触碰"下单/支付"红线控件时抛出（AGENTS.md §0 红线 1）。
  * 这是**最后一道程序化防线**：即便上层逻辑写错，命中危险控件也会在这里被拦下。
  */

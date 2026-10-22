@@ -34,9 +34,9 @@
 
 | 项 | 状态 |
 |---|---|
-| 阶段 | **基建完成**（仓库 + 目录骨架 + 开发工具链），下一步 **P0 + P1** |
-| 代码 | `src/*` 骨架（`index.ts`/`config.ts`）+ 冒烟测试；业务待 P0/P1 |
-| 工具链 | TypeScript 5.9 / ESLint 10 / Prettier 3 / `node --test`；`pnpm check` 全绿 |
+| 阶段 | **P0+P1 完成**（纯核心 + 插件骨架 + 异步任务 + Mock 全链路），下一步 **P2 真机** |
+| 代码 | `src/*` 全部模块落地（core/task/platform/device/ocr/tools）；`price_agent` 异步工具可用（Mock 数据） |
+| 工具链 | TypeScript 5.9 / ESLint 10 / Prettier 3 / `node --test`；`pnpm check` 全绿（54 tests） |
 | 文档 | 本套四件（本文 + `docs/` 三件）+ `CHANGELOG.md` |
 | 已锁定决策 | Android 全自动 adb 无线调试；首期美团+饿了么；结算页实付为准；招行周三+美团神券基准；先 P0+P1（Mock 先行）；无线调试方案 c（详见 §11） |
 

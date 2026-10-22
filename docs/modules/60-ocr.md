@@ -5,14 +5,16 @@
 ## 子文件职责
 | 文件 | 职责 | 公开 API |
 |---|---|---|
-| `reader.ts` | Ocr 接口 + tesseract 实现 | `Ocr` 接口, `createTesseractOcr(cfg)` |
-| `mock.ts` | 从 fixtures 返回文本+置信 | `createMockOcr(map)` |
+| `reader.ts` | Ocr 接口（唯一真源） | `Ocr`, `OcrResult`, `OcrWord`, `OcrBox` |
+| `mock.ts` | 从预置条目返回文本+置信 | `createMockOcr(entries)` |
 
 ```ts
 interface Ocr {
-  read(png: Uint8Array, roi?: Box): Promise<{ text: string; words: {t:string;c:number;bbox:Box}[] }>
+  read(png: Uint8Array, roi?: OcrBox): Promise<{ text: string; words: {t:string;c:number;bbox:OcrBox}[] }>
 }
 ```
+
+> 真机 tesseract 实现（`createTesseractOcr`）在 P3 接入；P1 用 `createMockOcr`。
 
 ## 实现要点（特有：四步质量门，§6.3.4）
 1. **逐字段置信分**：`payable` 等关键字段 `c ≥ 0.8` 否则判 `low`。

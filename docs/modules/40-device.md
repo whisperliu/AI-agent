@@ -5,13 +5,11 @@
 ## 子文件职责
 | 文件 | 职责 | 公开 API |
 |---|---|---|
-| `driver.ts` | 设备抽象（唯一真源） | `Driver` 接口 |
-| `adb.ts` | adb 实现 | `createAdbDriver(opts)` |
-| `mock.ts` | 回放 fixtures | `createMockDriver(fixturesDir)` |
-| `probe.ts` | 能力探测 | `probe(device): Capability` |
-| `state.ts` | 状态机断言 | `assertState(dump, StateAssertion)` |
-| `recover.ts` | 弹窗/授权/加载恢复 | `recover(d, ctx): boolean` |
-| `pageDetect.ts` | 页面识别（XML+OCR+截图） | `detectPage(dump, ocr?): PageId` |
+| `driver.ts` | 设备抽象（唯一真源） | `Driver`, `UiSelector` 接口 |
+| `adb.ts` | adb 实现（内部 runNativeCommand；P2 完善） | `createAdbDriver(opts)` |
+| `mock.ts` | MockDriver（点击 open-<platform> 后回放结算页 dump） | `createMockDriver(opts)` |
+| `mock-data.ts` | Mock 结算页 fixtures（脱敏） | `MOCK_SETTLE_PAGES`, `MOCK_OCR_ENTRIES` |
+| `state.ts` | 状态机断言（presentResourceIds） | `assertState`, `hasResourceId` |
 
 ```ts
 interface Driver {

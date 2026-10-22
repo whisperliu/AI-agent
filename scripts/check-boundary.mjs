@@ -5,6 +5,8 @@
  *   R1  src/price/**  : pure core — only `zod` (+ relative files inside price/).
  *   R2  src/task/**, src/platform/** : may import interfaces, never concrete impls.
  *   R3  src/tools/**  : must not reach into ctx.jobs/storageDomain or device/ocr impls.
+ *   R5  src/device/**, src/ocr/** : capability — must not import price/task/platform/tools.
+ *   R6  src/core/**   : must not import device/platform/task/tools impls.
  *   R4  no import cycles.
  */
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
@@ -54,6 +56,8 @@ for (const f of files) {
   const inPrice = r.startsWith('src/price/')
   const inTaskPlatform = r.startsWith('src/task/') || r.startsWith('src/platform/')
   const inTools = r.startsWith('src/tools/')
+  const inDeviceOcr = r.startsWith('src/device/') || r.startsWith('src/ocr/')
+  const inCore = r.startsWith('src/core/')
 
   for (const spec of imps) {
     const bare = spec.replace(/^node:/, '')
@@ -74,8 +78,22 @@ for (const f of files) {
       if (/\.\.\/(device|ocr)\b/.test(spec) || IMPL_IMPORTS.some((x) => spec.includes(x))) {
         violations.push(`R3 ${r}: tools/* must go through task/*, got '${spec}'`)
       }
-      if (/storageDomain|ctx\.jobs|\bjobs\/local\b/.test(spec)) {
+      if (/storageDomain|ctx\.jobs|\bjobs\/local\b|dsh-jobs/.test(spec)) {
         violations.push(`R3 ${r}: tools/* must not import storage/jobs directly, got '${spec}'`)
+      }
+    }
+    // R5 device/ocr must not import price/task/platform/tools
+    if (inDeviceOcr && /\.\.\/(price|task|platform|tools)\b/.test(spec)) {
+      violations.push(
+        `R5 ${r}: device/ocr must not import price/task/platform/tools, got '${spec}'`,
+      )
+    }
+    // R6 core must not import task/tools or device impls (concrete).
+    // Exception: core/container.ts is the DI composition root — the ONE place
+    // allowed to pick mock|adb implementations (module-spec §10-core).
+    if (inCore && !/src\/core\/container\.ts$/.test(r)) {
+      if (/\.\.\/(task|tools)\b/.test(spec) || /\.\.\/device\/(adb|mock)\b/.test(spec)) {
+        violations.push(`R6 ${r}: core/* must not import task/tools or device impls, got '${spec}'`)
       }
     }
     void bare

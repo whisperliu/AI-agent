@@ -150,6 +150,106 @@ export interface CompareResult {
   note: string[]
 }
 
+// ───────────────────────────── 任务编排（task）共享契约 ─────────────────────────────
+// 唯一真源：task/* 与 tools/* 都 `import type` 这里，禁止重复定义（§4.4 R5）。
+
+/** 任务状态机（§7.3）：queued → processing → completed|failed|cancelled|expired。 */
+export type TaskStatus =
+  'queued' | 'processing' | 'cancelling' | 'completed' | 'failed' | 'cancelled' | 'expired'
+
+/** 失败原因分类（对应 §7.5(3)(6) 与工具错误映射）。 */
+export type TaskFailureReason =
+  'timeout' | 'interrupted' | 'state' | 'needs_human' | 'busy' | 'forbidden' | 'error'
+
+/**
+ * 持久化任务记录（`ctx.storageDomain` 的 `tasks` 表，§7.5(1)）。
+ * 事实源；与 DSH job 解耦（job 随进程消失，本记录不丢）。
+ */
+export interface TaskRecord {
+  taskId: string
+  idempotencyKey: string
+  status: TaskStatus
+  phase: string
+  /** 最近若干进度行（有界，便于重取时回放最后状态）。 */
+  progress: string[]
+  createdAt: string
+  startedAt?: string
+  finishedAt?: string
+  /** 结果/错误原子写文件的绝对路径。 */
+  resultPath?: string
+  error?: { reason: TaskFailureReason; message: string }
+  /** 当前活跃运行的执行令牌；迟到写入校验其是否仍活跃（§7.5(2)）。 */
+  runToken: string
+  owner?: string
+  /** 结果有效期（ISO）；重取过期返回 expired 而非旧价（§7.5(7)）。 */
+  validUntil?: string
+  /** 是否已被消费（供 listTasks 补取，§7.5(5)）。 */
+  consumed?: boolean
+}
+
+/** 幂等键 → 任务映射（`idempotency` 表，§7.6）。 */
+export interface IdempotencyRecord {
+  key: string
+  taskId: string
+  /** 生成该键的输入快照 hash；同 key 异 hash 视为冲突 409（§7.6 R3）。 */
+  snapshotHash: string
+  createdAt: string
+}
+
+/** 比价任务启动选项（影响结果的选项，参与任务选项 hash，§7.6 R1）。 */
+export interface CompareOptionsSpec {
+  platforms?: string[]
+  city?: string
+  /** 每个平台最多取几个候选报价。 */
+  maxResults?: number
+  /** 是否允许 OCR 兜底（P1 仅 Mock）。 */
+  useOcr?: boolean
+}
+
+/** `price_agent` start 的入参。 */
+export interface StartInput {
+  item: string
+  city?: string
+  platforms?: string[]
+  /** 显式幂等键；缺省由系统按快照计算（§7.6 R1）。 */
+  idempotencyKey?: string
+  /** 强制重跑：忽略既有幂等记录（用于卡死/失败态重试，§7.6 R3）。 */
+  force?: boolean
+  options?: CompareOptionsSpec
+}
+
+/** `price_agent` start 的返回（异步契约，§7.4 / §7.6 R3：复用时返回既有状态）。 */
+export interface StartReply {
+  taskId: string
+  status: TaskStatus
+  message: string
+}
+
+/** `price_agent.getResult` 的返回（幂等只读，§7.4/§7.6 R2）。 */
+export interface GetResultReply {
+  taskId: string
+  status: TaskStatus
+  result?: CompareResult
+  error?: { reason: TaskFailureReason; message: string }
+  note?: string
+}
+
+/** `price_agent.listTasks` 的一行。 */
+export interface TaskSummary {
+  taskId: string
+  status: TaskStatus
+  phase: string
+  createdAt: string
+  finishedAt?: string
+}
+
+/** `price_agent.cancel` 的返回（幂等，§7.6 R2）。 */
+export interface CancelReply {
+  taskId: string
+  outcome: 'requested' | 'already-finished' | 'cancelled'
+  status: TaskStatus
+}
+
 /** 证据草稿：checkResult 由引擎填入，抽取阶段可先省略。 */
 export type EvidenceDraft = Omit<Evidence, 'checkResult'> & {
   checkResult?: Evidence['checkResult']

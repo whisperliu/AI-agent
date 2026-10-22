@@ -8,15 +8,19 @@
 ## 公开 API
 ```ts
 export function priceAgentTool(deps: Deps): ToolDefinition   // defineTool(...)
+export async function dispatch(deps, args, ctx): Promise<Reply> // 可离线单测的业务分派
+export function formatCompareResult(result): string            // 分组比价表（纯函数）
 ```
 
-## 工具方法（暴露给模型/前端）
-| 方法 | 入参 | 出参 |
+## 工具方法（单工具多 action，暴露给模型/前端）
+| `action` | 入参 | 出参 |
 |---|---|---|
-| `price_agent`（start） | `item, city?, platforms?, idempotencyKey?` | `{ taskId, status:'processing' }` |
-| `getResult` | `taskId` | `{ status, result? }`（幂等只读） |
-| `listTasks` | — | 未消费的已完成任务 |
-| `cancel` | `taskId` | `{ outcome }` |
+| `start` | `item, city?, platforms?, idempotencyKey?, options?` | `{ reply:{ taskId, status } }` |
+| `getResult` | `taskId` | `{ reply:{ status, result? } }`（幂等只读） |
+| `listTasks` | — | 未消费的已完成任务列表 |
+| `cancel` | `taskId` | `{ reply:{ outcome, status } }`（幂等） |
+
+> 实现：`defineTool` 只做参数 schema/异步执行/呈现；业务在 `dispatch` 里只调 `task/*`。
 
 ## 实现要点（特有）
 - **异步**：工具立即返回 `taskId`，绝不阻塞等待（§7.1）；后台由 `task/*` 跑，进度经 `ctx.jobs`。

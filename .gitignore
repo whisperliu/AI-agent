@@ -28,3 +28,10 @@ test/fixtures/**/*.raw.xml
 .DS_Store
 .idea/
 .vscode/
+
+# local runtime DSH homes
+.dshweb/
+.dshrun/
+.dshp/
+.dshm/
+.dshv/

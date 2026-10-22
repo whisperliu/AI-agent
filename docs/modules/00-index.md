@@ -27,5 +27,5 @@ export { Config } from './config.ts'
 - 冒烟：`apply` 后 `ctx.tools` 里能看到 `price_agent`（Mock 环境）。
 - 配置非法 → 加载失败并给出字段名。
 
-## 待实现（P1）
-空骨架已就位（`index.ts` 仅导出契约，`apply` 为空）。P1 填入容器装配与工具注册。
+## 待实现（P1 已完成）
+P1 已填入：`apply` 打开 `price_agent_tasks` 存储领域 → `buildCapabilities(ctx,config)` 组装 `Driver/Ocr/Clock`（唯一决定 mock|adb）→ `createJobsPort(ctx)` 适配 `ctx.jobs` → `recoverOnStartup` → `ctx.tools.register(priceAgentTool(deps))`；`ctx.effect` 注册 `domain.close()`。P2 接真机。

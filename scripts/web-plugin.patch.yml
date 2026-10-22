@@ -1,0 +1,36 @@
+# web-plugin.patch.yml — 运行时叠加层：把 price-agent 加进当前 web profile，无需改 profile。
+#
+# 用法（在能启动 dsh 的宿主机 shell 里）：
+#   dsh --patch /home/liuqiaoqiao/dsh-plugin-price-agent/scripts/web-plugin.patch.yml --profile web
+#   （其余参数保持你平时启动 dsh web 的方式，例如 --port/--host/--no-open）
+#
+# 说明：本层只新增 price-agent；模型路由(magpie)与默认模型沿用 web profile 自身的配置，
+# 因此这里**不要**再 insert dsh-magpie-connect，否则会与 profile 里的同 id 项冲突。
+# 原理：用绝对路径直接加载插件源码入口（仓库 node_modules 负责其依赖解析），已实测可正常 import。
+- insert:
+    - id: price-agent
+      name: '/home/liuqiaoqiao/dsh-plugin-price-agent/src/index.ts'
+      config:
+        device:
+          driver: mock # P2 真机再改 adb
+          serial: auto
+        task:
+          stepTimeoutMs: 8000
+          pageTimeoutMs: 20000
+          taskTimeoutMs: 90000
+          lockWaitMs: 5000
+          idempotencyTtlMinutes: 30
+        evidence:
+          ttlMinutes: 10
+          retainMax: 50
+        ocr:
+          enabled: false
+        platforms:
+          meituan:
+            enabled: true
+            appId: com.sankuai.meituan
+            priceToleranceYuan: 1.0
+          eleme:
+            enabled: true
+            appId: me.ele
+            priceToleranceYuan: 1.0

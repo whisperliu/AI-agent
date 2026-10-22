@@ -2,7 +2,7 @@
 # Applied after bundle layers, before the profile's own cordis.patch.yml.
 # Registers the price_agent tool plugin into the profile.
 #
-# NOTE: P1 will fill the real config. Fields below follow PLAN §4.3 / §5.1.
+# P1: real config (device/task/evidence/ocr/platforms). Fields follow §4.3 / §5.1.
 
 - insert:
     - id: price-agent
@@ -15,6 +15,7 @@
           stepTimeoutMs: 8000
           pageTimeoutMs: 20000
           taskTimeoutMs: 90000
+          lockWaitMs: 5000 # 锁等待上限；超时 → 503 BUSY（§7.7 R4）
           idempotencyTtlMinutes: 30
         evidence:
           ttlMinutes: 10

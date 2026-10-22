@@ -245,6 +245,46 @@
 
 ---
 
+### [19] 2026-10-22 08:20 · P1：插件骨架 + 异步任务 + Mock 全链路（解耦/幂等/并发/取消/重取/过期）
+- **为什么**：按 `docs/tasks.md` 的 P1 开工——把 P0 纯核心接成一个可在 DSH 里"一句话 → taskId → 实时进度 → 分组比价 → 证据过期/重取"跑通的异步工具，并落实 §2.1 解耦、§7.5 生命周期、§7.6 幂等、§7.7 并发。
+- **做了什么**（新增/改动文件）：
+  1. **共享类型**：`src/price/model.ts` 增 `TaskStatus/TaskFailureReason/TaskRecord/IdempotencyRecord/StartInput/StartReply/GetResultReply/CancelReply/TaskSummary/CompareOptionsSpec`（唯一真源，其它模块 `import type`）。
+  2. **core**：`clock.ts`（`SystemClock`+可推进 `FakeClock`）、`locks.ts`（薄封装 `dsh-atomic-write` 的 `withFileLock`，超时→`BusyError`）、`container.ts`（`Deps/JobsPort/ProgressPort` 契约 + `buildCapabilities` 组合根 + `TaskDomainSpec` zod 领域）、`jobs-adapter.ts`（`ctx.jobs`→`JobsPort` 适配）。`errors.ts` 增 `IdempotencyConflictError/TaskNotFoundError`。
+  3. **device/ocr**：`driver.ts` 接口、`mock.ts`（点击 open-<platform> 回放结算页 dump）、`mock-data.ts`（脱敏 fixtures）、`adb.ts`（runNativeCommand 骨架，P2 完善）、`state.ts`（断言）；`ocr/reader.ts`+`mock.ts`。
+  4. **platform**：`types.ts`（`PlatformStrategy/RawQuoteFacts`）、`extract.ts`（dump→事实）、`xml.ts`（零依赖 XML 解析）、`selectors/generic.ts`、`meituan.ts`/`eleme.ts`、`router.ts`。
+  5. **task**：`snapshot.ts`（§6.6 快照）、`hash.ts`（sha256/稳定序列化）、`idempotency.ts`（键=sha256(snapshot.hash‖平台集‖options)，**不含时间窗**）、`store.ts`（storageDomain 薄封装）、`progress.ts`、`runner.ts`（设备锁内串行驱动 + `draftFromFacts`→`priceQuote`→`compare`）、`lifecycle.ts`（`startTask/getResult/listTasks/cancel/recoverOnStartup`；结果 `writeFileAtomic`+checksum+runToken；过期→`expired`；取消确认不覆盖终态）。
+  6. **tools/index**：`tools/price-agent.ts`（`defineTool` 单工具多 action `start/getResult/listTasks/cancel` + 可离线单测的 `dispatch` + 比价表 `formatCompareResult`）；`src/index.ts` 装配（打开领域→能力→jobs 端口→恢复→注册工具）；`config.ts` 增 `task.lockWaitMs` 与默认值；`cordis.patch.yml` 同步。
+  7. **门禁**：`scripts/check-boundary.mjs` 增 R5（device/ocr 不得 import price/task/platform/tools）、R6（core 不得 import task/tools 或 device 实现；仅 `container.ts` 为组合根例外）、R3 增 `dsh-jobs`。
+- **验证方式（实跑）**：`pnpm check` 全绿（typecheck/lint/format/**boundary 35 files**/**54 tests**）；`pnpm test:coverage` 仍 **src/price 行 95.51% / 分支 78.33% / 函数 92.31%**（≥阈值）。新增测试覆盖 P1 DoD：①全链路 `start→getResult` 出分组比价表（美团 26.9 < 饿了么 27.0 → cheapest=meituan）；②解耦（切 mock/adb 不改业务，price 脱离设备单测）；③幂等（同键并发 10 次=1 任务、同键异参冲突、键不含时间窗）；④并发（设备锁下两任务串行不交叉、锁超时→BusyError=BUSY）；⑤取消（运行中取消→cancelled 且不被 failed 覆盖）；⑥重取（重启恢复 processing→failed(interrupted)、getResult 可重复）；⑦过期（TTL 后→expired，不返回旧价）；⑧结果原子写+checksum/runToken 校验。
+- **复用说明（§2.2）**：新增依赖 `@deepseek-ai/dsh-atomic-write`（原子写/文件锁）、`@deepseek-ai/dsh-jobs`（jobs 类型 + JobKindMap 合并）、`@deepseek-ai/dsh-storage-domain`（schema 校验持久 KV）；未自写存储/锁/任务调度。
+- **安全红线**：无下单/支付路径；`assertTapSafe` 仍在每次 `driver.tap` 前调用；Mock 不触网、无凭证入库。
+- **更新后状态**：**P1 完成**，`price_agent` 异步工具在 Mock 数据下可用；下一步 P2（真机通道）。
+
+### [20] 2026-10-22 12:50 · 把插件接入 web GUI 的运维脚本（profile 只读环境下的两种装法）
+- **为什么**：本会话沙箱 `/` 为只读挂载，无法写 `~/.dsh/profiles/web`；需要一个可复现、已实测能真实加载插件的方式接入 GUI。
+- **做了什么**：
+  1. `scripts/install-into-web-profile.sh`：在可写 `~/.dsh` 的宿主机 shell 里，把仓库软链到 `profiles/<p>/node_modules/dsh-price-agent` 并在 `cordis.patch.yml` 去重追加 `insert`（含 `.bak` 备份、可写性/依赖预检、幂等）。已用模拟 profile 实测两次运行只插 1 段。
+  2. `scripts/web-plugin.patch.yml`：`dsh --patch` 运行时叠加层，仅新增 `price-agent`（绝对路径加载 `src/index.ts`），沿用 profile 自身模型路由。
+- **验证方式（实跑）**：
+  - 用**隔离 `DSH_HOME`** 构造与真实 web 同构的 profile：`--dump-config` 组合树含 `price-agent`；`dsh --profile web` 真实启动 → HTTP 401（token 门），无 import/配置错误。
+  - 差分对照：坏路径 → `ERR_MODULE_NOT_FOUND`；真实路径 → 正常启动。证明是"真加载"而非仅合并。
+  - 另起**备用 GUI**（工作区内 `DSH_HOME`，端口 3096，`--patch scripts/web-plugin.patch.yml`）实测：`:3096` root→401、带 token→303，且不影响现网 `:3080`。
+- **未做/边界**：因只读挂载，未直接改写现网 `:3080` 的 profile（需用户手动重启以加载）。
+- **更新后状态**：接入 GUI 两条路径就绪并实测；插件本体仍为 Mock 驱动。
+
+### [21] 2026-10-22 12:58 · 修复：接入现网 web 后真调用暴露的 job owner 缺陷 + 幂等卡死回滚
+- **为什么**：方式 A 装进 `:3080` 后插件确实加载（`price_agent` 已出现在工具集），但真调用报
+  `background jobs unavailable: no job controller serves this agent`——`dsh-tool-jobs` 的 controller 按 agent scope 挂载，job 必须带 `owner = exec.agent.id`（DSH 自带 bash 亦如此），我们漏传。
+- **做了什么**：
+  1. owner 贯通：`exec.agent.id` → `dispatch(…,{owner})` → `startTask(opts.owner)` → `deps.jobs.start({owner})`；`jobs-adapter` 改为**每次调用**用 `spec.owner`（不再构造期固定）。
+  2. **幂等卡死回滚**：`jobs.start` 抛错时回滚已写的 `idempotency` 映射并把任务置 `failed`，避免"幂等命中却永不执行、永久 queued"。
+  3. `force=true` 重跑选项（§7.6 R3）；复用失败/取消记录时给出诚实提示"如需重跑请加 force=true"。
+- **验证方式（实跑）**：`pnpm check` 全绿（typecheck/lint/format/boundary/**56 tests**）；新增 `test/jobs-owner.test.ts`（owner 必传、jobs.start 失败→幂等回滚且后续同输入可新建并完成）。真实 `:3080` 复现并定位（存储里 `price-compare-…` 卡在 `queued/error=null`）。
+- **边界**：运行中的 `:3080` 仍是旧代码（Node 不热更服务端插件），需**再重启一次**加载修复。
+- **更新后状态**：接入 web 的可用性缺陷已修；重启后即可在 GUI 内真实比价。
+
+---
+
 ## 追加条目的模板（供后续每轮使用）
 
 ```markdown
@@ -258,4 +298,4 @@
 
 ---
 
-*最后更新：2026-10-22 02:10 +08:00*
+*最后更新：2026-10-22 12:58 +08:00*

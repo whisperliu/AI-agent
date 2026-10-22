@@ -5,11 +5,15 @@
 ## 子文件职责
 | 文件 | 职责 | 公开 API |
 |---|---|---|
-| `runner.ts` | 单次比价流程编排 | `runCompare(deps, plan, sink): Promise<CompareResult>` |
-| `progress.ts` | 进度阶段与状态机 | `Phase`, `emit(sink, line)` |
-| `store.ts` | 任务持久化映射 | `saveTask/getTask/listTasks` |
-| `idempotency.ts` | 幂等键与映射 | `computeKey(snapshot,tools)`, `beginIdempotent(key)` |
-| `lifecycle.ts` | 开始/取消/重取/恢复 | `startTask/getResult/cancel/listTasks` |
+| `runner.ts` | 单次比价流程编排（设备锁内串行） | `runCompare(deps, plan, sink, signal)`、`draftFromFacts` |
+| `progress.ts` | 进度阶段与状态机 | `PHASES`, `emit(sink, line)`, `platformLine(i,n,platform,phase)` |
+| `store.ts` | 任务持久化映射（storageDomain 薄封装） | `saveTask/getTask/listTaskRecords/get+put+deleteIdempotency` |
+| `idempotency.ts` | 幂等键与映射 | `computeKey(snapshot,platformIds,options)`, `assertSameSnapshot` |
+| `lifecycle.ts` | 开始/取消/重取/恢复/过期 | `startTask/getResult/listTasks/cancel/recoverOnStartup` |
+| `snapshot.ts` | 统一输入快照（§6.6） | `buildSnapshot(input)` |
+| `hash.ts` | 确定性哈希（键/校验和） | `sha256/hashObject/stableStringify` |
+
+> 共享任务类型（`TaskRecord/TaskStatus/StartInput/GetResultReply/…`）唯一真源在 `src/price/model.ts`（§4.4 R5）。
 
 ## 实现要点（特有）
 - **任务状态机**：`queued → processing → completed|failed|cancelled|expired`（§7.3）。
@@ -28,6 +32,7 @@
 - 数据契约 `Quote/CompareResult`：§6.2
 
 ## 测试
-- `lifecycle.test.ts`（幂等/取消/重启/过期/重取）
-- `idempotency.test.ts`（同键并发 10 次=1 任务、异参 `409`、保留期）
-- `concurrency.test.ts`（设备锁串行、记账并发不损坏）
+- `lifecycle.test.ts`（取消/重启恢复/过期/重取/listTasks/取消中不覆盖终态）
+- `idempotency.test.ts`（同键并发 10 次=1 任务、异参冲突、键不含时间窗）
+- `concurrency.test.ts`（设备锁串行不交叉、锁超时→BusyError）
+- `decoupling.test.ts`（全链路 start→getResult；切 mock/adb 不改业务）

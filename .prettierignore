@@ -6,3 +6,10 @@ coverage
 pnpm-lock.yaml
 *.md
 test/fixtures
+
+# local runtime DSH homes (spare GUI / isolated runs)
+.dshweb
+.dshrun
+.dshp
+.dshm
+.dshv
