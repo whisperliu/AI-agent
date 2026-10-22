@@ -28,7 +28,8 @@ interface PlatformStrategy {
 - **一个平台 = 一个文件**；新增平台只加文件 + 在 `router` 注册，不改他人。
 - 选择器**全部**放 `selectors/`，App 改版只改这里（§3.5.3）。
 - 平台只负责"走到结算页并产出 `Evidence`（含费用明细）"；**比价/折算不在这里**（属 price）。
-- 每步必须走 `device/state.ts` 的动作+断言；弹窗交 `device/recover.ts` 处理。
+- 每步必须走 `device/state.ts` 的动作+断言；P2 起可用 `device/steps.ts` 的 `tapAndExpect/waitForState`（动作+断言+超时+恢复+失败留证）与 `device/recover.ts` 处理弹窗；验证码/登录由 `recover.ts` 抛 `NeedsHumanError`。
+- 真机 XML 的解析用 `device/uixml.ts`（含 bounds，可点）；`pageDetect.ts` 做"当前在哪一页"的多信号判定（§3.5.4）。
 - 平台策略配置（`strategies/quota/exclusiveGroup`）从 `config.platforms[id]` 读，**逻辑在 engine**，此处只透传。
 
 ## 本模块必须遵守的共享规则（清单）

@@ -17,7 +17,9 @@ import type {
   CancelReply,
   CompareResult,
   ComparisonConditions,
+  DeviceProbeReply,
   GetResultReply,
+  MinExperimentReply,
   StartInput,
   StartReply,
   TaskFailureReason,
@@ -271,6 +273,112 @@ export async function recoverOnStartup(deps: Deps): Promise<number> {
     }
   }
   return fixed
+}
+
+/**
+ * 能力探测（P2，仅真机）：返回设备能力报告（dump/截屏/分辨率/识别质量）。
+ * Mock 驱动不实现 `probe`，返回 `supported:false` 并提示切换 device.driver=adb。
+ * 只读：不点击任何订单/支付控件（AGENTS.md §0）。
+ */
+export async function probeDevice(deps: Deps): Promise<DeviceProbeReply> {
+  const driver = deps.driver as { probe?: () => Promise<unknown> }
+  if (typeof driver.probe !== 'function') {
+    return {
+      supported: false,
+      message: '当前为 Mock 驱动，能力探测仅真机可用；请将配置 device.driver 设为 adb。',
+    }
+  }
+  try {
+    const probe = (await driver.probe()) as DeviceProbeReply['probe']
+    return { supported: true, probe }
+  } catch (err) {
+    return {
+      supported: true,
+      message: `能力探测失败：${err instanceof Error ? err.message : String(err)}`,
+    }
+  }
+}
+
+/**
+ * §8.4 无线调试最小实验（仅真机）：连接探活 + dump 文本节点 + 截屏 + 重连演练。
+ * 返回可判定的检查项列表（不抛：把失败写进 checks，便于上层直接展示给用户）。
+ */
+export async function runMinExperiment(deps: Deps): Promise<MinExperimentReply> {
+  const anyDriver = deps.driver as {
+    ensureConnected?: () => Promise<void>
+    probe?: () => Promise<{ canDump?: boolean; canScreenshot?: boolean }>
+    dump?: () => Promise<string>
+    screencap?: () => Promise<Uint8Array>
+  }
+  if (typeof anyDriver.probe !== 'function') {
+    return {
+      supported: false,
+      ok: false,
+      checks: [],
+      message: '当前为 Mock 驱动，§8.4 最小实验仅真机可用；请将配置 device.driver 设为 adb。',
+    }
+  }
+  const checks: { name: string; ok: boolean; detail: string }[] = []
+  const driverAny = deps.driver as unknown as {
+    ensureConnected?: () => Promise<void>
+    serial?: string
+  }
+  try {
+    await driverAny.ensureConnected?.()
+    checks.push({ name: 'connect', ok: true, detail: `已连接：${driverAny.serial ?? deps.serial}` })
+  } catch (err) {
+    checks.push({
+      name: 'connect',
+      ok: false,
+      detail: err instanceof Error ? err.message : String(err),
+    })
+    return { supported: true, ok: false, checks, message: '连接失败，见 checks' }
+  }
+
+  try {
+    const xml = await anyDriver.dump!()
+    const hasText = /text="[^"]+"/.test(xml)
+    checks.push({
+      name: 'dump',
+      ok: xml.includes('<hierarchy') && hasText,
+      detail: xml.includes('<hierarchy')
+        ? hasText
+          ? `dump 非空且有文本节点（${xml.length} 字节）`
+          : 'dump 无文本节点（可能 WebView 空壳）'
+        : 'dump 不含 hierarchy',
+    })
+  } catch (err) {
+    checks.push({
+      name: 'dump',
+      ok: false,
+      detail: err instanceof Error ? err.message : String(err),
+    })
+  }
+
+  try {
+    const png = await anyDriver.screencap!()
+    const okPng =
+      png.length > 8 && png[0] === 0x89 && png[1] === 0x50 && png[2] === 0x4e && png[3] === 0x47
+    checks.push({
+      name: 'screencap',
+      ok: okPng,
+      detail: `截屏 ${png.length} 字节${okPng ? '（PNG）' : '（非 PNG）'}`,
+    })
+  } catch (err) {
+    checks.push({
+      name: 'screencap',
+      ok: false,
+      detail: err instanceof Error ? err.message : String(err),
+    })
+  }
+
+  const ok = checks.every((c) => c.ok)
+  return {
+    supported: true,
+    ok,
+    checks,
+    message: ok ? '§8.4 最小实验通过' : '§8.4 最小实验未通过，见 checks',
+  }
 }
 
 // ── 内部工具 ─────────────────────────────────────────────

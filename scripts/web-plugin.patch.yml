@@ -12,8 +12,10 @@
       name: '/home/liuqiaoqiao/dsh-plugin-price-agent/src/index.ts'
       config:
         device:
-          driver: mock # P2 真机再改 adb
+          driver: mock # P2 真机再改 adb；serial 填 host:port 或 auto
           serial: auto
+          adbPath: adb # 无系统 adb 时填 platform-tools/adb 的绝对路径
+          autoReconnect: true
         task:
           stepTimeoutMs: 8000
           pageTimeoutMs: 20000

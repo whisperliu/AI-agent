@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="com.sankuai.meituan" content-desc="" clickable="false" bounds="[0,0][1080,2400]">
+    <node index="0" text="安全验证" resource-id="com.sankuai.meituan:id/verify_title" class="android.widget.TextView" package="com.sankuai.meituan" clickable="false" bounds="[300,900][780,980]" />
+    <node index="1" text="请拖动滑块完成验证" resource-id="" class="android.widget.TextView" package="com.sankuai.meituan" clickable="false" bounds="[200,1000][880,1080]" />
+    <node index="2" text="" resource-id="com.sankuai.meituan:id/slider" class="android.widget.SeekBar" package="com.sankuai.meituan" clickable="true" bounds="[200,1200][880,1320]" />
+  </node>
+</hierarchy>

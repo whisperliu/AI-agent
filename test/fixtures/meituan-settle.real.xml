@@ -1,0 +1,16 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="com.sankuai.meituan" content-desc="" clickable="false" bounds="[0,0][1080,2400]">
+    <node index="0" text="" resource-id="com.sankuai.meituan:id/title_bar" class="android.widget.LinearLayout" package="com.sankuai.meituan" clickable="false" bounds="[0,120][1080,240]">
+      <node index="0" text="确认订单" resource-id="com.sankuai.meituan:id/tv_title" class="android.widget.TextView" package="com.sankuai.meituan" clickable="false" bounds="[440,150][640,210]" />
+    </node>
+    <node index="1" text="香叶烤鸭（人民广场店）" resource-id="com.sankuai.meituan:id/store_name" class="android.widget.TextView" package="com.sankuai.meituan" clickable="false" bounds="[40,300][820,360]" />
+    <node index="2" text="香叶·精品烤鸭饭 大份 x1" resource-id="com.sankuai.meituan:id/item_name" class="android.widget.TextView" package="com.sankuai.meituan" clickable="false" bounds="[40,400][820,460]" />
+    <node index="3" text="¥28.90" resource-id="com.sankuai.meituan:id/fee_goods" class="android.widget.TextView" package="com.sankuai.meituan" clickable="false" bounds="[880,400][1040,460]" />
+    <node index="4" text="配送费 ¥2.00" resource-id="com.sankuai.meituan:id/fee_delivery" class="android.widget.TextView" package="com.sankuai.meituan" clickable="false" bounds="[40,500][600,560]" />
+    <node index="5" text="打包费 ¥1.00" resource-id="com.sankuai.meituan:id/fee_packing" class="android.widget.TextView" package="com.sankuai.meituan" clickable="false" bounds="[40,600][600,660]" />
+    <node index="6" text="满30减5 -¥5.00" resource-id="com.sankuai.meituan:id/discount_coupon" class="android.widget.TextView" package="com.sankuai.meituan" clickable="false" bounds="[40,700][800,760]" />
+    <node index="7" text="实付 ¥26.90" resource-id="com.sankuai.meituan:id/payable" class="android.widget.TextView" package="com.sankuai.meituan" clickable="false" bounds="[740,2200][1040,2280]" />
+    <node index="8" text="提交订单" resource-id="com.sankuai.meituan:id/submit_order_btn" class="android.widget.Button" package="com.sankuai.meituan" clickable="true" bounds="[700,2280][1060,2360]" />
+  </node>
+</hierarchy>

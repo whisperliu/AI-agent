@@ -14,10 +14,10 @@
 | 模型 | `workbuddy2api/deepseek-v4.1-flash`（经 `dsh-magpie-connect`, baseUrl `127.0.0.1:3425`） |
 | GUI | `http://127.0.0.1:3080`（profile `web`） |
 | 工作目录 | `/home/liuqiaoqiao/dsh-plugin-price-agent` |
-| 时间跨度 | 2026-10-22 08:14 → 13:11（约 4h57m，含跨会话空档） |
+| 时间跨度 | 2026-10-22 08:14 → 13:30（含跨会话空档） |
 | 起始基线 | P0 已提交（`43d6ea0`），P1 未开始 |
-| 结束状态 | **P1 收工（用户 13:11 收尾）**；P0+P1 已提交（P1=`970d2fb`），现网 `:3080` 实跑通过 |
-| 期间提交 | `970d2fb feat(plugin): P1 插件骨架 + 异步任务 + Mock 全链路` |
+| 结束状态 | **P1 收工 + P2 真机通道代码完成**（轮次13）；真机 §8.4 PASS 待用户本机连手机判定 |
+| 期间提交 | `970d2fb`（P1）、`d43ac0d`（P1 收尾快照）；P2 未提交 |
 
 ---
 
@@ -37,6 +37,7 @@
 | 10 | 13:05 | 「把我们的每一轮对话记录下来…」 | 生成本文件 `docs/conversation-log.md` | 本记录 | — | ✅ |
 | 11 | 13:08 | 「当前会话结束时追加这份文件」 | 说明无"会话结束钩子"；一度改为每轮追加（该策略随后被用户更正） | 本文件更新（轮次11） | — | ✅ |
 | 12 | 13:11 | 「收尾，P1收工。」 | 按约定做**最终快照追加**并提交 | 本文件最终版 | 门禁绿 | ✅ |
+| 13 | 13:12 | 「下一步P2真机」 | 读 P2 文档/device 代码；装 adb 到工作区；实现 adb 真机驱动/连接重连/能力探测/弹窗恢复/截图留证/步骤原语；新增 `probe`/`selfCheck` 工具动作与 §8.4/演练脚本；**修 `assertTapSafe` 漏检 `text` 的红线漏洞**；补离线测试与文档 | device/{adb,uixml,probe,recover,pageDetect,steps,capture}、tools/task 扩展、2 脚本、device-p2 测试 | `pnpm check` 82/82；coverage 95.51%；无真机可读报错 | ✅（真机 PASS 待用户连机） |
 
 > 说明：上述"人类可见轮次"已把会话中穿插的**系统时间采样提醒 / job 完成通知 / 工具被打断后重试**等非人类消息折叠掉，只保留实际的人类请求与对应的实质产出。
 
@@ -88,6 +89,22 @@
 - **做了什么**：清运行时目录；`pnpm check` 56/56；暂存 56 文件；Conventional Commit 提交。
 - **产物**：`970d2fb`。
 
+### 轮次 10–12 · 对话记录 & P1 收尾
+- **做了什么**：生成 `docs/conversation-log.md`；按"收尾时一次性追加"策略做最终快照；提交。
+- **产物**：本文件 + `d43ac0d`（docs 收尾快照）。
+
+### 轮次 13 · 下一步 P2 真机
+- **意图**：进入 `docs/tasks.md` 的 P2（真机通道 + 能力探测）。
+- **关键发现/动作**：
+  - 环境：本沙箱 **无系统 adb、`$HOME` 只读、无真机**。把 platform-tools(adb 1.0.41) 解压到 `.home/android-sdk/`，用 `HOME=$(mktemp -d)` 实测 `adb devices` 可运行（空列表）；真实 `runNativeCommand('adb',…)` 路径返回可读错误。
+  - `device/adb.ts` 重写为真实驱动：注入 `AdbRunner`（默认 `runNativeCommand`）、`ensureConnected` 探活+掉线 `adb connect` 重连 1 次、dump 直出/回退、tap 按 bounds 中心、input 转义、swipe、screencap 走 `pull` 二进制、`probe` 采集。
+  - 新增 `uixml/probe/recover/pageDetect/steps/capture`；`state.ts` 增 `presentTexts` 断言。
+  - 工具/任务新增 `probe`/`selfCheck`，`runCompare` 真机自动探测；配置增 `device.adbPath/autoReconnect`。
+  - **红线修复**：`assertTapSafe` 补检 `text`（原仅 label/resourceId → `tap({text:'提交订单'})` 会绕过），并加回归测试。
+  - 脚本：`scripts/device-min-experiment.sh`（§8.4）、`scripts/device-rehearsal.mjs`（只读演练报告）。
+- **验证**：`pnpm check` 82/82；`device-p2.test.ts` 23 tests 离线全绿；无设备时脚本/工具给出可读 FAIL。
+- **边界**：真机 §8.4 PASS 需用户本机连手机运行脚本判定；真实坐标/页面契约留 P3 校准。
+
 ### 轮次 10 · 记录对话
 - **产物**：本文件。
 
@@ -111,16 +128,19 @@
 | job owner | web 下 `ctx.jobs.start` 缺 `owner` → `no job controller serves this agent` | 贯通 `exec.agent.id → dispatch → startTask → ctx.jobs.start({owner})` | `core/jobs-adapter.ts`、`tools/price-agent.ts`、`task/lifecycle.ts` |
 | 幂等卡死 | `jobs.start` 失败前已写幂等映射 → 永久 queued | 失败回滚映射+置 failed；`force=true` 重跑 | `task/lifecycle.ts`、`price/model.ts` |
 | 结果落点 | web 进程 cwd=仓库根，结果落到 `/home/liuqiaoqiao/.price-agent` | 可用 `DSH_PRICE_AGENT_DATA` 覆盖；本地脱敏不入库 | `src/index.ts` |
+| **安全护栏漏检 text（P2）** | `assertTapSafe` 只查 label/resourceId，`tap({text:'提交订单'})` 可绕过红线 | 改为同时检查 `label/resourceId/text`，加回归测试 | `core/safety.ts`、`test/safety.test.ts` |
+| adb 二进制取图 | `exec-out screencap` 经 utf8 会损坏 PNG | 改 `shell screencap` 落盘 → `adb pull` 本地文件 → 读字节 + PNG 魔数校验 | `device/adb.ts` |
+| 无真机可测 | 沙箱无手机、adb 未装 | 全部驱动逻辑经 `AdbRunner` 注入假 runner 离线测试；真实路径用无设备场景验"可读报错" | `test/device-p2.test.ts` |
 
 ---
 
 ## 4. 交付物清单（截至本记录）
 
-- 代码：`src/{core,task,platform,device,ocr,tools,price,config.ts,index.ts}`（P0+P1）。
-- 测试：`test/*.test.ts` + `test/p1-env.ts`（共 56 tests）。
-- 运维脚本：`scripts/web-plugin.patch.yml`、`scripts/install-into-web-profile.sh`。
-- 文档：`PLAN.md`、`docs/tasks.md`、`docs/modules/*`、`CHANGELOG.md`（[19][20][21]）、本文件。
-- 提交：`970d2fb`（本地；未 push）。
+- 代码：`src/{core,task,platform,device,ocr,tools,price,config.ts,index.ts}`（P0+P1+P2）。
+- 测试：`test/*.test.ts` + `test/p1-env.ts`（共 82 tests；P2 新增 `device-p2.test.ts` 23 tests）。
+- 运维脚本：`scripts/web-plugin.patch.yml`、`scripts/install-into-web-profile.sh`、`scripts/device-min-experiment.sh`、`scripts/device-rehearsal.mjs`。
+- 文档：`PLAN.md`、`docs/tasks.md`、`docs/modules/*`、`CHANGELOG.md`（[19]–[24]）、本文件。
+- 提交：`970d2fb`（P1）、`d43ac0d`（P1 收尾）；P2 未提交（工作区）。
 
 ---
 
@@ -136,9 +156,9 @@
     "cwd": "/home/liuqiaoqiao/dsh-plugin-price-agent",
     "tz": "Asia/Shanghai",
     "start": "2026-10-22T08:14:19+08:00",
-    "end": "2026-10-22T13:11:00+08:00",
+    "end": "2026-10-22T13:30:00+08:00",
     "baseline_commit": "43d6ea0",
-    "final_commit": "970d2fb"
+    "final_commit": "d43ac0d (P1); P2 未提交"
   },
   "turns": [
     {"n":1,"at":"~08:14","user":"下一步构建","intent":"build P1","result":"P1 全链路实现 + 测试/文档","verify":"pnpm check 54/54","status":"ok"},
@@ -152,20 +172,24 @@
     {"n":9,"at":"13:03","user":"git commit","intent":"commit","result":"970d2fb (56 files)","verify":"pre-commit 56/56; tree clean","status":"ok"},
     {"n":10,"at":"13:05","user":"记录每一轮对话","intent":"metadata tracking doc","result":"本文件","verify":"-","status":"ok"},
     {"n":11,"at":"13:08","user":"当前会话结束时追加这份文件","intent":"append-at-session-end","result":"策略更正为收尾时追加","verify":"-","status":"ok"},
-    {"n":12,"at":"13:11","user":"收尾，P1收工。","intent":"final-snapshot","result":"最终快照并提交","verify":"gate green","status":"ok"}
+    {"n":12,"at":"13:11","user":"收尾，P1收工。","intent":"final-snapshot","result":"最终快照并提交","verify":"gate green","status":"ok"},
+    {"n":13,"at":"13:12","user":"下一步P2真机","intent":"build P2 real-device channel","result":"adb 驱动/连接重连/能力探测/弹窗恢复/截图留证/probe+selfCheck/演练脚本 + 修 assertTapSafe 漏检 text","verify":"pnpm check 82/82; coverage 95.51%; 无设备可读报错","status":"ok(真机PASS待用户连机)"}
   ],
   "fixes": [
     {"topic":"job owner","file":"src/core/jobs-adapter.ts","detail":"owner=exec.agent.id 贯通"},
     {"topic":"idempotency stuck","file":"src/task/lifecycle.ts","detail":"jobs.start 失败回滚+force 重跑"},
-    {"topic":"readonly sandbox","file":"scripts/*","detail":"--patch 叠加 / install 脚本"}
+    {"topic":"readonly sandbox","file":"scripts/*","detail":"--patch 叠加 / install 脚本"},
+    {"topic":"safety text gap","file":"src/core/safety.ts","detail":"assertTapSafe 补检 text（P2 发现）"},
+    {"topic":"adb binary screencap","file":"src/device/adb.ts","detail":"screencap 走 pull 文件而非 utf8"}
   ],
   "deliverables": [
     "src/**","test/**","scripts/web-plugin.patch.yml","scripts/install-into-web-profile.sh",
-    "docs/conversation-log.md","CHANGELOG.md[19][20][21]"
+    "scripts/device-min-experiment.sh","scripts/device-rehearsal.mjs",
+    "docs/conversation-log.md","CHANGELOG.md[19]-[24]"
   ]
 }
 ```
 
 ---
 
-*会话收尾快照：2026-10-22 13:11 +08:00 · 状态：P1 收工（P0+P1 已提交，现网 :3080 实跑通过）*
+*会话快照：2026-10-22 13:11 P1 收工 → 13:30 追加轮次13（P2 真机通道代码完成，真机 §8.4 PASS 待用户连机判定）。*

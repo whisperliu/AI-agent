@@ -37,6 +37,27 @@ export async function runCompare(
   return withDeviceLock(
     deps.serial,
     async () => {
+      // 能力探测：仅当驱动支持（真机 adb）时跑一次，结果写入进度（§3.5.4(1)）。
+      // Mock 驱动无 probe，P1 行为不变。
+      const probeable = deps.driver as { probe?: () => Promise<unknown> }
+      if (typeof probeable.probe === 'function') {
+        p.update('能力探测 · 读取设备与页面识别质量')
+        try {
+          const probe = (await probeable.probe()) as {
+            canDump?: boolean
+            canScreenshot?: boolean
+            quality?: { recommend?: string; treeRichness?: number }
+          }
+          p.update(
+            `能力探测 · dump=${probe.canDump ? 'OK' : 'FAIL'} 截屏=${probe.canScreenshot ? 'OK' : 'FAIL'} 识别建议=${probe.quality?.recommend ?? '?'}`,
+          )
+        } catch (err) {
+          p.update(
+            `能力探测失败（继续尝试读价）：${err instanceof Error ? err.message : String(err)}`,
+          )
+        }
+      }
+
       const quotes: Quote[] = []
       const n = plan.platforms.length
       for (let i = 0; i < n; i++) {

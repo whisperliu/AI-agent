@@ -19,8 +19,10 @@ export function formatCompareResult(result): string            // 分组比价�
 | `getResult` | `taskId` | `{ reply:{ status, result? } }`（幂等只读） |
 | `listTasks` | — | 未消费的已完成任务列表 |
 | `cancel` | `taskId` | `{ reply:{ outcome, status } }`（幂等） |
+| `probe`（P2，真机） | — | 设备能力探测报告（dump/截屏/分辨率/识别质量）；Mock 下 `supported:false` |
+| `selfCheck`（P2，真机） | — | §8.4 无线调试最小实验检查项（连接/dump/截屏）；Mock 下 `supported:false` |
 
-> 实现：`defineTool` 只做参数 schema/异步执行/呈现；业务在 `dispatch` 里只调 `task/*`。
+> 实现：`defineTool` 只做参数 schema/异步执行/呈现；业务在 `dispatch` 里只调 `task/*`（`probe/selfCheck` 也只调 `task/lifecycle` 的 `probeDevice/runMinExperiment`，不直连 device 实现）。
 
 ## 实现要点（特有）
 - **异步**：工具立即返回 `taskId`，绝不阻塞等待（§7.1）；后台由 `task/*` 跑，进度经 `ctx.jobs`。

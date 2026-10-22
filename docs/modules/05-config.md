@@ -14,8 +14,10 @@ export type ConfigInput = Infer<typeof Config>
 ## 本模块特有字段（只列这里才有的）
 | 路径 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `device.driver` | `'mock' \| 'adb'` | `mock` | P1 先 mock |
-| `device.serial` | string | `auto` | 多设备指定 |
+| `device.driver` | `'mock' \| 'adb'` | `mock` | P1 先 mock；P2 切 `adb` 上真机 |
+| `device.serial` | string | `auto` | `auto`=唯一在线设备；或 `host:port` / 序列号 |
+| `device.adbPath` | string | `adb` | adb 可执行文件路径（无系统 adb 时填 platform-tools 绝对路径） |
+| `device.autoReconnect` | boolean | `true` | 掉线自动 `adb connect` 重连一次（§8.3） |
 | `task.stepTimeoutMs` / `pageTimeoutMs` / `taskTimeoutMs` | natural | 8000 / 20000 / 90000 | 三级超时 |
 | `task.idempotencyTtlMinutes` | natural | 30 | 幂等保留期（§7.6） |
 | `evidence.ttlMinutes` | natural | 10 | 证据有效期（§6.5） |

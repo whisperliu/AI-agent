@@ -8,7 +8,25 @@ DSH 插件：在你自己的 Android 手机上打开外卖 App（美团 / 饿了
 
 ## 状态
 
-**基建阶段（脚手架 + 开发工具链已就绪）**，业务未实现。文档：总纲 [PLAN.md](./PLAN.md) · 模块规范 [docs/module-spec.md](./docs/module-spec.md) · **每模块说明 [docs/modules/](./docs/modules/README.md)** · 任务与验收 [docs/tasks.md](./docs/tasks.md) · 决策 [docs/decisions.md](./docs/decisions.md) · 变更 [CHANGELOG.md](./CHANGELOG.md)。
+**P0+P1 完成（Mock 全链路可跑）+ P2 真机通道代码完成**（adb 驱动/连接重连/能力探测/弹窗恢复/截图留证/只读演练脚本），下一步 P3 单平台抓价。真机门槛（§8.4 最小实验）需在本机连手机后判定。文档：总纲 [PLAN.md](./PLAN.md) · 模块规范 [docs/module-spec.md](./docs/module-spec.md) · **每模块说明 [docs/modules/](./docs/modules/README.md)** · 任务与验收 [docs/tasks.md](./docs/tasks.md) · 决策 [docs/decisions.md](./docs/decisions.md) · 变更 [CHANGELOG.md](./CHANGELOG.md)。
+
+## P2 真机快速上手（只读、不会下单/支付）
+
+```bash
+# 1) 准备 adb（本沙箱 HOME 只读，必须给 adb 一个可写 HOME）
+mkdir -p .home/andhome
+HOME=$(mktemp -d) .home/android-sdk/platform-tools/adb version   # 或用系统 adb
+
+# 2) §8.4 无线调试最小实验（判定门槛；填手机「无线调试」页面的 IP:端口）
+ADB=.home/android-sdk/platform-tools/adb HOME=$(mktemp -d) \
+  ./scripts/device-min-experiment.sh 192.168.1.8 5555
+
+# 3) 只读演练 / 能力探测报告（落到 .price-agent/reports/）
+ADB_PATH=$PWD/.home/android-sdk/platform-tools/adb HOME=$(mktemp -d) \
+  node scripts/device-rehearsal.mjs --serial 192.168.1.8:5555 --open com.sankuai.meituan
+```
+
+在 GUI 内也可直接让 AI 调 `price_agent({action:'selfCheck'})` / `price_agent({action:'probe'})`（需先把配置 `device.driver` 改成 `adb`）。
 
 > 开发某个模块时，**只读 `docs/modules/NN-*.md` 中对应那一份**，不必通读 `module-spec.md`。
 
@@ -20,7 +38,7 @@ DSH 插件：在你自己的 Android 手机上打开外卖 App（美团 / 饿了
 
 - WSL2 (Ubuntu 26.04) + Windows；Node v24.22（直接运行 `.ts`）；pnpm 12.14
 - DSH `@deepseek-ai/dsh` 0.2.1-rc.2（profile `web`）
-- 手机 Android 11+，开启无线调试；`adb`（`apt install android-tools-adb`）
+- 手机 Android 11+，开启无线调试；`adb`（`apt install android-tools-adb`，或用仓库内 `.home/android-sdk/platform-tools/adb`）
 
 ## 目录结构（详见 PLAN §4.3 / §4.4）
 

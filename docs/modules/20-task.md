@@ -9,7 +9,7 @@
 | `progress.ts` | 进度阶段与状态机 | `PHASES`, `emit(sink, line)`, `platformLine(i,n,platform,phase)` |
 | `store.ts` | 任务持久化映射（storageDomain 薄封装） | `saveTask/getTask/listTaskRecords/get+put+deleteIdempotency` |
 | `idempotency.ts` | 幂等键与映射 | `computeKey(snapshot,platformIds,options)`, `assertSameSnapshot` |
-| `lifecycle.ts` | 开始/取消/重取/恢复/过期 | `startTask/getResult/listTasks/cancel/recoverOnStartup` |
+| `lifecycle.ts` | 开始/取消/重取/恢复/过期 + **P2 设备探测** | `startTask/getResult/listTasks/cancel/recoverOnStartup`, `probeDevice/runMinExperiment` |
 | `snapshot.ts` | 统一输入快照（§6.6） | `buildSnapshot(input)` |
 | `hash.ts` | 确定性哈希（键/校验和） | `sha256/hashObject/stableStringify` |
 
@@ -24,6 +24,7 @@
 - **结果**：用 `writeFileAtomic` 原子写 + `checksum` + `runToken` 校验，迟到写入丢弃（§7.5(2)(5)）。
 - **恢复**：启动读 `tasks` 表，`processing` 且无活进程 → `failed(interrupted)`（§7.5(6)）。
 - 每步 `sink` → `ctx.jobs` 的 `updateProgress(line)`；不直接碰 UI。
+- **P2 能力探测**：`runCompare` 进设备锁后，若驱动实现 `probe()`（真机 adb）则先跑一次并写入进度；Mock 驱动无 `probe` 则跳过（不改 P1 行为）。`probeDevice/runMinExperiment` 在 Mock 下返回 `supported:false`，真机下走驱动 `probe()/ensureConnected()`，全程只读。
 
 ## 本模块必须遵守的共享规则（清单）
 - 异步契约与工具返回：§7.4

@@ -13,13 +13,22 @@ import type { Deps } from '../core/container.ts'
 import type {
   CancelReply,
   CompareResult,
+  DeviceProbeReply,
   GetResultReply,
+  MinExperimentReply,
   StartReply,
   TaskSummary,
 } from '../price/model.ts'
-import { cancel, getResult, listTasks, startTask } from '../task/lifecycle.ts'
+import {
+  cancel,
+  getResult,
+  listTasks,
+  probeDevice,
+  runMinExperiment,
+  startTask,
+} from '../task/lifecycle.ts'
 
-export type PriceAction = 'start' | 'getResult' | 'listTasks' | 'cancel'
+export type PriceAction = 'start' | 'getResult' | 'listTasks' | 'cancel' | 'probe' | 'selfCheck'
 
 export interface PriceAgentArgs {
   action: PriceAction
@@ -37,6 +46,8 @@ export type PriceAgentReply =
   | { action: 'getResult'; reply: GetResultReply }
   | { action: 'listTasks'; reply: TaskSummary[] }
   | { action: 'cancel'; reply: CancelReply }
+  | { action: 'probe'; reply: DeviceProbeReply }
+  | { action: 'selfCheck'; reply: MinExperimentReply }
 
 /** 业务分派（可离线单测；不经过 defineTool / ToolRunContext）。 */
 export async function dispatch(
@@ -75,6 +86,14 @@ export async function dispatch(
       const reply = await cancel(deps, args.taskId)
       return { action: 'cancel', reply }
     }
+    case 'probe': {
+      const reply = await probeDevice(deps)
+      return { action: 'probe', reply }
+    }
+    case 'selfCheck': {
+      const reply = await runMinExperiment(deps)
+      return { action: 'selfCheck', reply }
+    }
     default:
       throw new Error(`unknown action: ${String((args as { action?: unknown }).action)}`)
   }
@@ -98,7 +117,36 @@ export function formatReply(reply: PriceAgentReply): string {
       return reply.reply.map((t) => `- ${t.taskId} · ${t.status} · ${t.phase}`).join('\n')
     case 'getResult':
       return formatGetResult(reply.reply)
+    case 'probe':
+      return formatProbe(reply.reply)
+    case 'selfCheck':
+      return formatSelfCheck(reply.reply)
   }
+}
+
+function formatProbe(r: DeviceProbeReply): string {
+  if (!r.supported) return `设备能力探测：不支持 — ${r.message ?? ''}`
+  if (!r.probe) return `设备能力探测：${r.message ?? '未取得结果'}`
+  const p = r.probe
+  const L = ['设备能力探测报告：']
+  L.push(`- 机型：${p.model ?? '?'} / Android ${p.androidVersion ?? '?'}`)
+  L.push(`- 分辨率：${p.resolution ?? '?'} @ ${p.density ?? '?'}dpi`)
+  L.push(`- 前台包名：${p.foreground ?? '?'}`)
+  L.push(`- dump 可用：${p.canDump}（${p.dumpLatencyMs ?? '?'}ms）｜截屏可用：${p.canScreenshot}`)
+  if (p.quality) {
+    L.push(
+      `- 页面识别质量：文本节点 ${p.quality.textNodes} / 资源 id ${p.quality.resourceIds} / WebView ${p.quality.hasWebview} / 丰富度 ${p.quality.treeRichness} → 建议 ${p.quality.recommend}`,
+    )
+  }
+  return L.join('\n')
+}
+
+function formatSelfCheck(r: MinExperimentReply): string {
+  if (!r.supported) return `§8.4 最小实验：不支持 — ${r.message}`
+  const L = [`§8.4 无线调试最小实验：${r.ok ? 'PASS ✅' : 'FAIL ❌'}`]
+  for (const c of r.checks) L.push(`- [${c.ok ? 'x' : ' '}] ${c.name}：${c.detail}`)
+  if (!r.ok) L.push(`提示：${r.message}`)
+  return L.join('\n')
 }
 
 function formatGetResult(r: GetResultReply): string {
@@ -146,9 +194,10 @@ export function priceAgentTool(deps: Deps): ToolDefinition {
     parameters: {
       action: {
         type: 'string',
-        enum: ['start', 'getResult', 'listTasks', 'cancel'],
+        enum: ['start', 'getResult', 'listTasks', 'cancel', 'probe', 'selfCheck'],
         required: true,
-        description: 'start=发起比价; getResult=取结果; listTasks=列未消费结果; cancel=取消',
+        description:
+          'start=发起比价; getResult=取结果; listTasks=列未消费结果; cancel=取消; probe=设备能力探测(真机); selfCheck=§8.4 无线调试最小实验(真机)',
       },
       item: { type: 'string', description: '菜品关键词，如“香叶 烤鸭饭”（start 必填）' },
       city: { type: 'string', description: '城市（可选，默认上海）' },

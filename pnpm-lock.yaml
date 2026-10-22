@@ -17,6 +17,9 @@ importers:
       '@deepseek-ai/dsh-jobs':
         specifier: 0.2.1-rc.2
         version: 0.2.1-rc.2(debcb02ef3b44ec60ca8327e9dc1dc47)
+      '@deepseek-ai/dsh-native-command':
+        specifier: 0.2.1-rc.2
+        version: 0.2.1-rc.2(@deepseek-ai/cordis@4.0.5)
       '@deepseek-ai/dsh-storage-domain':
         specifier: 0.2.1-rc.2
         version: 0.2.1-rc.2(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-storage@0.2.1-rc.2(@deepseek-ai/cordis@4.0.5))
@@ -130,6 +133,11 @@ packages:
 
   '@deepseek-ai/dsh-llm@0.2.1-rc.2':
     resolution: {integrity: sha512-3xfoMDHEpUJGcH2Lu+lNXUJYRBclYfBkdCG9Au02VzIjYAm9BrFmc/MNuaVTg0vwgvPpTsd6Fx1IeGtfmQFvlg==}
+    peerDependencies:
+      '@deepseek-ai/cordis': ~4.0.5
+
+  '@deepseek-ai/dsh-native-command@0.2.1-rc.2':
+    resolution: {integrity: sha512-m2RecWJ9ccubuQYtbh3n0R9hPXa1ADaXjoOlXOoaBp3ot8LaLhDMLQsujZgYRlvqehn0t/q6jM8qlndwW6Ry2w==}
     peerDependencies:
       '@deepseek-ai/cordis': ~4.0.5
 
@@ -802,6 +810,10 @@ snapshots:
       '@deepseek-ai/dsh-util-values': 0.2.1-rc.2(@deepseek-ai/cordis@4.0.5)
       '@deepseek-ai/schemastery': 3.18.5
       zod: 4.4.3
+
+  '@deepseek-ai/dsh-native-command@0.2.1-rc.2(@deepseek-ai/cordis@4.0.5)':
+    dependencies:
+      '@deepseek-ai/cordis': 4.0.5
 
   '@deepseek-ai/dsh-ptc-runtime@0.2.1-rc.2(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-sandbox@0.2.1-rc.2(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-llm@0.2.1-rc.2(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/dsh-session@0.2.1-rc.2(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-scope@0.2.1-rc.2(@deepseek-ai/cordis@4.0.5))))':
     dependencies:

@@ -24,4 +24,9 @@ export interface Driver {
   swipe(dir: 'up' | 'down'): Promise<void>
   /** 截屏，返回 PNG 字节。 */
   screencap(): Promise<Uint8Array>
+  /**
+   * 能力探测（可选）：真机驱动实现；Mock 驱动可不实现（上层据 undefined 提示"仅真机可用"）。
+   * 返回结构见 device/probe.ts 的 `DeviceProbe`；此处用宽松类型避免循环依赖。
+   */
+  probe?(): Promise<unknown>
 }

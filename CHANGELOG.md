@@ -10,8 +10,8 @@
 
 | 项 | 状态 |
 |---|---|
-| 阶段 | **P0 完成（price 纯核心）**，下一步 P1（插件骨架 + 异步任务 + Mock） |
-| 代码 | **P0 完成**：`src/price/*`（模型/两层校验/引擎/相似度/证据）已实现，`src/core/{errors,safety}.ts`，`scripts/check-boundary.mjs`；36 测试、price 行覆盖 95.5%；P1 待做 |
+| 阶段 | **P0+P1 完成** + **P2 真机通道代码完成**（真机 §8.4 PASS 待用户连机判定），下一步 P3 单平台抓价 |
+| 代码 | P0 `src/price/*`；P1 `core/task/platform/device/ocr/tools`（Mock 全链路）；P2 `device/{adb,uixml,probe,recover,pageDetect,steps,capture}` + `probe/selfCheck`；**82 测试**、price 行覆盖 95.5% |
 | 规范 | **`AGENTS.md`**（自动加载）：安全红线 / 按模块读文档 / 修改 / 测试 / 提交 / DoD |
 | 文档 | **总纲** `PLAN.md` + **共享规范** `docs/module-spec.md`（§2–§8）+ **每模块说明** `docs/modules/*`（只写模块特有）+ **任务** `docs/tasks.md`（§9）+ **决策** `docs/decisions.md`（§10–§13）+ 本 `CHANGELOG.md` |
 | Git | `main`；`f88433d`(init) → `74af302`(骨架) → `55f5516`(工具链) → `e6a8b35`(文档拆分) → `3cf19c1`(模块文档) → 本次(AGENTS+基础工程) |
@@ -294,6 +294,20 @@
 - **做了什么**：`docs/conversation-log.md` 补全时间跨度(08:14→13:11)与结束状态、追加轮次12、更新 JSON `end` 与页脚。
 - **验证方式**：仅文档变更；`pnpm check` 56 tests 绿。
 - **更新后状态**：P1 阶段收尾；后续从 P2 真机（adb）继续。
+
+### [24] 2026-10-22 13:25 · P2：真机通道 + 能力探测 + 弹窗恢复 + 只读演练
+- **为什么**：按 `docs/tasks.md` P2 开工——把 Mock 能力换成可驱动真机的 adb 通道，落实"连接/重连 + 能力探测 + 页面识别 + 每步动作×断言×超时×恢复 + 失败截图/dump 留证"，并给出 §8.4 无线调试最小实验与只读演练脚本。
+- **做了什么**：
+  1. **device 层新增/重写**：`adb.ts`（真实 adb 驱动：`AdbRunner` 注入边界、`ensureConnected` 探活+掉线 `adb connect` 重连 1 次、`dump` 直出/回退 `/sdcard`、`tap` 按 bounds 中心点、`input` 转义、`swipe`、`screencap` 走 `pull` 二进制、`probe` 采集机型/分辨率/前台包名/识别质量）；`uixml.ts`（含 bounds/class/clickable 的 XML 解析）；`probe.ts`（`analyzeDump` 树丰富度+降级建议、PNG 校验、`wm size`/前台包名解析）；`recover.ts`（验证码/登录/升级/广告/权限/加载分类，**验证码/登录立即 `NeedsHumanError`、绝不点击**）；`pageDetect.ts`（多信号页面识别）；`steps.ts`（`waitForState/tapAndExpect`… 动作+断言+超时+恢复+失败取证）；`capture.ts`（`writeFileAtomic` 落 dump/截图到 `.price-agent/evidence`）；`state.ts` 增文案断言（`presentTexts`）。
+  2. **配置**：`config.ts` 增 `device.adbPath`（默认 `adb`）、`device.autoReconnect`（默认 true）；同步 `cordis.patch.yml`、`scripts/web-plugin.patch.yml`。
+  3. **工具/任务**：`price_agent` 增 `probe`（能力探测）、`selfCheck`（§8.4 最小实验）两个 action；`task/lifecycle.ts` 增 `probeDevice/runMinExperiment`（Mock 下返回 `supported:false`，真机走驱动 `probe()`，全程只读）；`task/runner.ts` 真机进设备锁后自动跑一次 `probe` 写进进度（Mock 无 `probe` 则跳过，P1 行为不变）。
+  4. **运维脚本**：`scripts/device-min-experiment.sh`（§8.4 bash 逐条判定）、`scripts/device-rehearsal.mjs`（只读演练，产出 JSON+Markdown 能力探测报告到 `.price-agent/reports/`）。
+  5. **依赖**：新增 `@deepseek-ai/dsh-native-command@0.2.1-rc.2`（既定的 adb 执行库，§2.2 复用）。
+  6. **安全修复（P2 发现的真实红线漏洞）**：`core/safety.ts: assertTapSafe` 原先只检查 `label/resourceId`，**漏检 `text`**——即 `tap({text:'提交订单'})` 会绕过护栏。已改为同时检查 `label/resourceId/text`，并补回归测试 `blocks when only text selector matches`。
+  7. 沙箱内把 platform-tools（adb 1.0.41）解压到 `.home/android-sdk/`（被 `.gitignore` 的 `.home/` 忽略），用于本地实测。
+- **验证方式（实跑）**：`pnpm check` 全绿（typecheck/lint/format/**boundary 38 files**/**82 tests**）；`pnpm test:coverage` 仍 **src/price 行 95.51% / 分支 78.33% / 函数 92.31%**（≥阈值）。新增 `test/device-p2.test.ts`（23 tests，全离线、注入假 runner）覆盖：uixml 解析/中心点、`analyzeDump` 原生树→tree 与 WebView 空壳→ocr/human、`isValidPng/parseWmSize/parseForeground`、验证码抛 `NeedsHumanError` 且从不点击、升级弹窗恢复、页面识别、**下单控件被拦且不产生任何 adb 调用**、截屏走 pull 二进制、`probe` 采集、超时写 dump 证据抛 `StateAssertionError`、mock/adb 两条 `probeDevice/runMinExperiment` 路径。真实 `runNativeCommand('adb',…)` 在无设备环境下返回可读错误"未检测到在线 Android 设备"，不崩。
+- **未做/边界**：**本沙箱无真机**（`adb devices` 为空，用户手机未连接），§8.4 最小实验的"真机 PASS"需用户在本机连手机后运行脚本判定；真实点击坐标/页面契约需 P3 用真机 dump 校准。隐私：截图仅落本地 `.price-agent/`、`chmod 600`、不上传。
+- **更新后状态**：P2 代码完成；`device.driver=adb` 即可在 GUI 用 `probe/selfCheck/start`；下一步 P3 单平台抓价。
 
 ---
 

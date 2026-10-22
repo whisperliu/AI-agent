@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="com.sankuai.meituan" content-desc="" clickable="false" bounds="[0,0][1080,2400]">
+    <node index="0" text="首页" resource-id="com.sankuai.meituan:id/tab_home" class="android.widget.TextView" package="com.sankuai.meituan" clickable="true" bounds="[0,2250][216,2350]" />
+    <node index="1" text="搜索" resource-id="com.sankuai.meituan:id/search_entry" class="android.widget.EditText" package="com.sankuai.meituan" clickable="true" bounds="[40,240][1040,340]" />
+    <node index="2" text="外卖" resource-id="com.sankuai.meituan:id/tab_waimai" class="android.widget.TextView" package="com.sankuai.meituan" clickable="true" bounds="[216,2250][432,2350]" />
+  </node>
+</hierarchy>

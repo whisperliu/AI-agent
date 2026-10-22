@@ -128,7 +128,12 @@ export function buildCapabilities(
   const serial = config.device.serial
   const driver =
     config.device.driver === 'adb'
-      ? createAdbDriver({ serial, stepTimeoutMs: config.task.stepTimeoutMs })
+      ? createAdbDriver({
+          serial,
+          adbPath: config.device.adbPath,
+          autoReconnect: config.device.autoReconnect,
+          stepTimeoutMs: config.task.stepTimeoutMs,
+        })
       : createMockDriver({ settlePages: MOCK_SETTLE_PAGES })
   const ocr = createMockOcr(MOCK_OCR_ENTRIES)
   return { driver, ocr, clock: new SystemClock(), serial, dataDir: opts.dataDir }

@@ -10,9 +10,14 @@ export const Config = z.object({
   device: z
     .object({
       driver: z.union([z.const('mock'), z.const('adb')]).default('mock'),
+      /** `auto`（唯一在线设备）或 `host:port` / 序列号。 */
       serial: z.string().default('auto'),
+      /** adb 可执行文件路径（默认走 PATH 的 `adb`）。 */
+      adbPath: z.string().default('adb'),
+      /** 掉线时自动 `adb connect` 重连一次（§8.3）。 */
+      autoReconnect: z.boolean().default(true),
     })
-    .default({ driver: 'mock', serial: 'auto' }),
+    .default({ driver: 'mock', serial: 'auto', adbPath: 'adb', autoReconnect: true }),
   task: z
     .object({
       stepTimeoutMs: z.natural().default(8000),

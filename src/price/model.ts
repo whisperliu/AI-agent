@@ -250,6 +250,40 @@ export interface CancelReply {
   status: TaskStatus
 }
 
+/** 设备能力探测形状（与 device/probe.ts 的 `DeviceProbe` 对齐；此处松类型避免跨层依赖）。 */
+export interface ProbeInfo {
+  canDump?: boolean
+  dumpLatencyMs?: number
+  resolution?: string
+  density?: string
+  foreground?: string
+  canScreenshot?: boolean
+  model?: string
+  androidVersion?: string
+  quality?: {
+    textNodes: number
+    resourceIds: number
+    hasWebview: boolean
+    treeRichness: number
+    recommend: 'tree' | 'ocr' | 'human'
+  }
+}
+
+/** `price_agent.probe` 的返回（P2，仅真机）。 */
+export interface DeviceProbeReply {
+  supported: boolean
+  probe?: ProbeInfo
+  message?: string
+}
+
+/** `price_agent.selfCheck`（§8.4 最小实验）的单项检查与总结果。 */
+export interface MinExperimentReply {
+  supported: boolean
+  ok: boolean
+  checks: { name: string; ok: boolean; detail: string }[]
+  message: string
+}
+
 /** 证据草稿：checkResult 由引擎填入，抽取阶段可先省略。 */
 export type EvidenceDraft = Omit<Evidence, 'checkResult'> & {
   checkResult?: Evidence['checkResult']

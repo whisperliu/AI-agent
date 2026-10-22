@@ -9,8 +9,10 @@
       name: 'dsh-price-agent'
       config:
         device:
-          driver: mock # mock | adb  (P1 starts on mock; §2.1 R3)
+          driver: mock # mock | adb  (P2：真机把 driver 设为 adb，serial 填 host:port 或 auto)
           serial: auto
+          adbPath: adb # adb 可执行文件路径（默认走 PATH；无系统 adb 时填 platform-tools 绝对路径）
+          autoReconnect: true # 掉线自动 adb connect 重连一次（§8.3）
         task:
           stepTimeoutMs: 8000
           pageTimeoutMs: 20000
