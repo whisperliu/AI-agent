@@ -72,7 +72,12 @@ interface PlatformStrategy {
 
 - **驱动解耦（同美团）**：`eleme.enterSettlePage` 按驱动能力选路——无 `probe` 的 Mock 走 `enterViaOpenTag`；真机 adb 走 `runElemeReal`。`task/runner` 不改。
 - **共享而非复制**：把"坐标/行抽取 + 结果卡/可点文案"抽到 `settleRows.ts`、把 `Navigator` 抽到 `navigator.ts`（均无平台知识），美团/饿了么各自只保留**平台特有**的锚点/文案/关键词。`meituanReal.ts` 仍 re-export `createNavigator/Navigator/buildRows` 等保持旧 API 不变。
-- **饿了么真机边界**：饿了么未登录时触发**实名/短信验证**（`WebViewActivity` 身份验证 + `UserLoginActivity` 短信码），按红线 §0-2 **立即停止、未点击/未识别**。真机全流程跑通需用户本人先登录；本轮多平台以离线 fixture + 真实代码路径验收。
+- **饿了么真机边界（登录+canvas 自绘，2026-10 实测）**：
+  - 未登录触发**实名/短信验证** → 按红线 §0-2 立即停止零点击（用户已自行登录）。
+  - **整个 App 是 canvas/TMS 自绘**：`uiautomator dump` 全页仅 1 个 `water_mark_view`，首页/搜索/结果/店铺/**结算页**均无可读文本节点 → **控件树路径不可行，只能 OCR**。
+  - `runElemeReal` 走 OCR：`tryReadSettle` 控件树优先，读不到实付且注入 `ctx.ocr` 时 → 截图 + `settlePanelRoi`（`tms_fragment_container` 右栏）→ `extractElemeSettleFromOcr`。`confidence` 永不 high，低置信/不平 → `needsConfirm`。
+  - **真机实测**：payable=**¥20.8** 稳定读出（截图"立即支付 ¥20.8"）；一次 OCR 丢"打包费 ¥1"数字 → delta −1 → 如实 `low/needsConfirm`。
+  - 导航（搜索/加购/去结算）在 canvas 下只靠 resourceId 锚点 + 坐标点按；**全自动逐页校准不如美团稳定**（canvas 无文案钩子），当前可稳定验收的是**已在结算页时的 OCR 读数**。
 - **fixture**：`test/fixtures/eleme-settle.real-device.xml`（脱敏；30+3+1−5=29 balanced、`confidence=high`）。
 
 ## 测试

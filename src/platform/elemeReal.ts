@@ -15,6 +15,7 @@ import type { UiNode } from '../device/uixml.ts'
 import { parseUiNodes } from '../device/uixml.ts'
 import type { UiSelector } from '../device/driver.ts'
 import type { ComparisonConditions, DiscountKind, FeeKind, OptionalSaving } from '../price/model.ts'
+import type { OcrWord } from '../ocr/reader.ts'
 import { itemScore } from '../price/similarity.ts'
 import { ELEME_SELECTORS } from './selectors/eleme.ts'
 import type { Navigator } from './navigator.ts'
@@ -27,7 +28,7 @@ import {
   PRICE_ONLY_RE,
   rowText,
 } from './settleRows.ts'
-import type { RawQuoteFacts } from './types.ts'
+import type { PlatformEnterContext, RawQuoteFacts } from './types.ts'
 
 const FEE_LABEL_MAP: { key: string; kind: FeeKind }[] = [
   { key: '商品金额', kind: 'goods' },
@@ -345,6 +346,185 @@ export function extractElemeSettleFromDump(
   return extractElemeSettle(parseUiNodes(dump), cond, dump)
 }
 
+// ────────────────────────── OCR 抽取（饿了么 canvas 自绘，控件树不可读） ──────────────────────────
+//
+// 真机实测（TB321FU / 饿了么 12.9.78，2026-10）：饿了么**整个 App 是 canvas/TMS 自绘**，
+// uiautomator dump 全页只有 1 个 `water_mark_view` 节点（无任何文本/金额节点）。
+// 因此饿了么结算页**只能截图 OCR**：对右侧结算面板 ROI 裁剪后 OCR，逐词取"标签→金额"。
+// OCR 路径 `confidence` 永不 `high`（§6.3.4：OCR 命中即降级），低置信直接 needsConfirm。
+
+/** OCR 金额归一：`Y3.9`/`y35.9`/`¥20.8`/`xy20.8`/`￥1` 等 → 数值。取第一个带小数的数字或整数。 */
+export function ocrMoney(t: string | undefined): number {
+  if (!t) return Number.NaN
+  const m = /(\d+(?:\.\d{1,2})?)/.exec(t)
+  if (!m) return Number.NaN
+  const n = Number.parseFloat(m[1] ?? '')
+  return Number.isFinite(n) ? n : Number.NaN
+}
+
+/** 在一组 OCR 词里找"标签词"右侧同一行最近的金额词（OCR 无精确 bounds，按 y 与 x 就近）。 */
+function ocrAmountRightOf(words: OcrWord[], labelRe: RegExp): { amount: number; conf: number } {
+  const labels = words.filter((w) => labelRe.test(w.t))
+  for (const lab of labels) {
+    const ly = lab.bbox.y + lab.bbox.h / 2
+    const lx1 = lab.bbox.x + lab.bbox.w
+    const cands = words
+      .filter((w) => {
+        if (w === lab) return false
+        if (!/\d/.test(w.t)) return false
+        const y = w.bbox.y + w.bbox.h / 2
+        return Math.abs(y - ly) <= 26 && w.bbox.x >= lx1 - 10
+      })
+      .sort((a, b) => a.bbox.x - b.bbox.x)
+    for (const c of cands) {
+      const v = ocrMoney(c.t)
+      if (Number.isFinite(v)) return { amount: v, conf: c.c }
+    }
+    // 有的标签与金额在同一 token（"打包费 Y1"）：尝试从标签词本身抠金额。
+    const inline = ocrMoney(lab.t)
+    if (
+      Number.isFinite(inline) &&
+      /\d/.test(lab.t.replace(/^(打包|配送|商品|服务|小计|实付|合计)/, ''))
+    ) {
+      return { amount: inline, conf: lab.c }
+    }
+  }
+  return { amount: Number.NaN, conf: 0 }
+}
+
+interface OcrRow {
+  text: string
+  money: number
+}
+/** 按 y 中心把 OCR 词聚成视觉行，行内按 x 排序拼接；money 取行内最靠右的金额。 */
+export function clusterOcrRows(words: OcrWord[], tolY = 16): OcrRow[] {
+  const groups: { y: number; items: OcrWord[] }[] = []
+  for (const w of words) {
+    const yc = w.bbox.y + w.bbox.h / 2
+    let g = groups.find((it) => Math.abs(it.y - yc) <= tolY)
+    if (!g) {
+      g = { y: yc, items: [] }
+      groups.push(g)
+    }
+    g.items.push(w)
+  }
+  return groups.map((g) => {
+    g.items.sort((a, b) => a.bbox.x - b.bbox.x)
+    const text = g.items.map((w) => w.t).join('')
+    let money = Number.NaN
+    for (let i = g.items.length - 1; i >= 0; i--) {
+      const v = ocrMoney(g.items[i]!.t)
+      if (Number.isFinite(v) && /\d/.test(g.items[i]!.t)) {
+        money = v
+        break
+      }
+    }
+    return { text, money }
+  })
+}
+
+/**
+ * 由 OCR 逐词结果构造 RawQuoteFacts（纯函数，可离线回放）。
+ * 只读取"事实"；算术是否自洽交 price/engine。OCR 可信度取各关键字段最低置信。
+ */
+export function extractElemeSettleFromOcr(
+  words: OcrWord[],
+  cond: ComparisonConditions,
+  ocrText = '',
+): RawQuoteFacts {
+  // 实付：优先「实付/合计/应付/立即支付」，其次"共减"左侧金额。
+  let pay = ocrAmountRightOf(words, /^(实付|合计|应付|待支付|实付款)$/)
+  if (!Number.isFinite(pay.amount)) pay = ocrAmountRightOf(words, /支付$/)
+  if (!Number.isFinite(pay.amount)) {
+    // 变体 B：找"共减"左侧最近金额。
+    const gong = words.find((w) => w.t.includes('共减') || w.t === '减')
+    if (gong) {
+      const gy = gong.bbox.y + gong.bbox.h / 2
+      const left = words
+        .filter(
+          (w) =>
+            /\d/.test(w.t) &&
+            Math.abs(w.bbox.y + w.bbox.h / 2 - gy) <= 26 &&
+            w.bbox.x < gong.bbox.x,
+        )
+        .sort((a, b) => b.bbox.x - a.bbox.x)
+      if (left[0]) pay = { amount: ocrMoney(left[0].t), conf: left[0].c }
+    }
+  }
+
+  // 行级抽取：OCR 会把中文标签拆成多 token（"优惠"+"后"、"免"+"配送"），
+  // 故按 y 聚成"视觉行"、拼成行文本，再在行内取最右金额。比整词匹配稳。
+  const rows = clusterOcrRows(words)
+
+  const fees: RawQuoteFacts['fees'] = []
+  const feeMap: { kw: RegExp; kind: FeeKind; label: string }[] = [
+    { kw: /打包|餐盒/, kind: 'packing', label: '打包费' },
+    { kw: /配送费/, kind: 'delivery', label: '配送费' },
+    { kw: /优惠后|商品金额|商品小计|商品原价/, kind: 'goods', label: '商品金额' },
+    { kw: /服务费/, kind: 'service', label: '服务费' },
+  ]
+  const seenFee = new Set<string>()
+  for (const f of feeMap) {
+    const hit = rows.find((r) => f.kw.test(r.text) && Number.isFinite(r.money))
+    if (hit && !seenFee.has(f.kind) && Number.isFinite(hit.money)) {
+      fees.push({ kind: f.kind, label: f.label, amount: Math.abs(hit.money), source: 'ocr' })
+      seenFee.add(f.kind)
+    }
+  }
+
+  const discounts: RawQuoteFacts['discounts'] = []
+  // 运费减免："免配送费/惊喜免配送费" 行（含配送费金额）→ delivery_waiver（金额=该行配送费；已含在实付）。
+  const waiverRow = rows.find((r) => /免配送|惊喜免/.test(r.text) && Number.isFinite(r.money))
+  const deliveryFee = fees.find((f) => f.kind === 'delivery')?.amount
+  const waiverAmount = waiverRow && Number.isFinite(waiverRow.money) ? waiverRow.money : deliveryFee
+  if (waiverAmount && waiverAmount > 0) {
+    discounts.push({
+      kind: 'delivery_waiver',
+      platform: 'eleme',
+      id: 'eleme-delivery-waiver',
+      name: '免配送费（OCR）',
+      amount: Math.abs(waiverAmount),
+      scope: 'delivery',
+      source: 'ocr',
+      autoApplied: true,
+      alreadyIncludedInPayable: true,
+    })
+  }
+  // 说明：结算页底部"已优惠 ¥X"是**整单已减汇总**（已含在 payable 与"优惠后"商品价里），
+  // **绝不**作为独立 discount 叠加——否则与"优惠后价"重复计算（§5.3）。仅在 needConfirm 说明里体现。
+
+  // 关键字段最低 OCR 置信（0–1）→ confidence 永不 high。
+  const confs = [pay.conf, ...fees.map(() => 100), ...discounts.map(() => 100)].filter((c) => c > 0)
+  const minConf = confs.length ? Math.min(...confs) : 0
+  // OCR 命中：payable 读到且 minConf≥0.6 → medium；否则 low（→ needsConfirm）。
+  const confidence: 'high' | 'medium' | 'low' = Number.isFinite(pay.amount)
+    ? minConf >= 0.6
+      ? 'medium'
+      : 'low'
+    : 'low'
+
+  const byField: Record<string, 'tree' | 'ocr'> = {}
+  if (Number.isFinite(pay.amount)) byField.payable = 'ocr'
+  for (const f of fees) byField[f.kind] = 'ocr'
+
+  return {
+    storeName: cond.item,
+    storeAmapId: undefined,
+    itemName: cond.item,
+    itemSpec: undefined,
+    qty: cond.qty,
+    composition: undefined,
+    fees,
+    discounts,
+    optionalSavings: [],
+    payable: Number.isFinite(pay.amount) ? Math.abs(pay.amount) : Number.NaN,
+    confidence,
+    byField,
+    dump: ocrText,
+    screenshot: undefined,
+  }
+}
+
 /**
  * 真机走查：首页 → 搜索 item → 选第一家店 → 加购 → 进结算 → 读实付。
  * 与美团同构（复用 navigator 原语）；超时 → StateAssertionError；验证码/登录 → NeedsHumanError。
@@ -352,26 +532,25 @@ export function extractElemeSettleFromDump(
 export async function runElemeReal(
   nav: Navigator,
   cond: ComparisonConditions,
+  ctx?: PlatformEnterContext,
 ): Promise<RawQuoteFacts> {
   const byId = (ids: string[]): UiSelector[] => ids.map((id) => ({ resourceId: id }))
-  const byTextAny = (texts: string[]): UiSelector[] => texts.map((text) => ({ text }))
   const settle = elemeAnchors()
+  const settleRightPanel = [...settle, { resourceId: 'tms_fragment_container' }]
 
-  // 0) 已在结算页 → 直接读实付，零点击（最安全路径）。
-  try {
-    const { nodes, dump } = await nav.waitAny(settle, '结算页(已在)', 1500)
-    return extractElemeSettle(nodes, cond, dump)
-  } catch {
-    // 不在结算页 → 走完整导航。
-  }
+  // 已在结算页 → 直接读（控件树优先，读不到则 OCR），零点击（最安全路径）。
+  const already = await tryReadSettle(nav, cond, ctx, settleRightPanel, 1500)
+  if (already) return already
 
+  // 导航（饿了么为 canvas 自绘，按 resourceId 锚点 + 坐标点击；文案锚点在 dump 里通常不存在）。
   await nav.waitAny(byId(ELEME_SELECTORS.homeAnchors), '首页')
   await nav.tap({ resourceId: ELEME_SELECTORS.searchEntry[0]! }, '搜索入口')
   await nav.waitAny(byId([ELEME_SELECTORS.searchInput[0]!]), '搜索页')
   await nav.input({ resourceId: ELEME_SELECTORS.searchInput[0]! }, cond.item, '搜索输入')
   await nav.tap({ resourceId: ELEME_SELECTORS.searchSubmit[0]! }, '搜索按钮')
 
-  await nav.waitAny(byTextAny(ELEME_SELECTORS.searchResultTexts), '搜索结果', 12000)
+  // 搜索结果页（canvas）：等结算面板之外，用坐标点第一张结果卡。
+  await sleep(nav, 2500)
   const first = await nav.firstResultCard?.()
   if (first && nav.tapPoint) await nav.tapPoint(first.x, first.y, '第一家店铺')
 
@@ -379,39 +558,96 @@ export async function runElemeReal(
     await nav.swipeUp()
     await nav.repaint?.()
   }
-  await nav.waitAny(byTextAny(ELEME_SELECTORS.storePageTexts), '店铺页', 20000)
+  await sleep(nav, 1500)
 
-  let hasDish = await nav.hasAny?.(ELEME_SELECTORS.dishOpen)
-  for (let i = 0; i < 3 && !hasDish; i++) {
-    await nav.swipeUp()
-    await nav.repaint?.()
-    hasDish = await nav.hasAny?.(ELEME_SELECTORS.dishOpen)
+  // 加购（canvas：用 firstActionable 找"去结算/加入购物车"可点区域 → 坐标点）。
+  let added = false
+  for (let attempt = 0; attempt < 4 && !added; attempt++) {
+    const target =
+      (await nav.firstActionable?.(['去结算'])) ??
+      (await nav.firstActionable?.(['加入购物车', '选规格']))
+    if (target && nav.tapPoint) {
+      await nav.tapPoint(target.x, target.y, '加购/去结算')
+      await sleep(nav, 1500)
+      added = true
+    } else {
+      await nav.repaint?.()
+      await sleep(nav, 800)
+    }
   }
-  if (hasDish) await nav.tap({ text: ELEME_SELECTORS.dishOpen[0]! }, '选规格')
-  else await nav.tap({ text: ELEME_SELECTORS.addToCart[0]! }, '加入购物车')
 
-  let hasAdd = await nav.hasAny?.(['加入购物车'])
-  for (let i = 0; i < 6 && !hasAdd; i++) {
-    await nav.repaint?.()
-    hasAdd = await nav.hasAny?.(['加入购物车'])
-  }
-  if (hasAdd) await nav.tap({ text: '加入购物车' }, '加入购物车')
-
+  // 去结算并读（最多试 3 次；每次读控件树 / OCR）。
   for (let attempt = 0; attempt < 3; attempt++) {
-    const hasCart = await nav.hasAny?.(['去结算'])
-    if (!hasCart) {
-      await nav.repaint?.()
-      continue
-    }
-    await nav.tap({ text: '去结算' }, '去结算')
-    try {
-      const ok = await nav.waitAny(settle, '结算页', 6000)
-      return extractElemeSettle(ok.nodes, cond, ok.dump)
-    } catch {
-      await nav.repaint?.()
+    const read = await tryReadSettle(nav, cond, ctx, settleRightPanel, 6000)
+    if (read) return read
+    const cart = await nav.firstActionable?.(['去结算'])
+    if (cart && nav.tapPoint) {
+      await nav.tapPoint(cart.x, cart.y, '去结算')
+      await sleep(nav, 1800)
     }
   }
 
-  const { nodes, dump } = await nav.waitAny(settle, '结算页', 12000)
-  return extractElemeSettle(nodes, cond, dump)
+  // 最后一次：等结算页（控件树读不到时也会尝试 OCR）。
+  const finalRead = await tryReadSettle(nav, cond, ctx, settleRightPanel, 12000)
+  if (finalRead) return finalRead
+  // 兜底：返回低置信（payable=NaN）→ 上层 needsConfirm。
+  const nodes = await nav.nodes()
+  return extractElemeSettle(nodes, cond, await nav.dump())
+}
+
+/**
+ * 尝试读取结算页：控件树优先；若控件树读不到实付（canvas 自绘）且注入了 OCR，则截图 ROI OCR。
+ * 返回 undefined 表示"当前不在结算页/读不到"，调用方继续导航。
+ */
+async function tryReadSettle(
+  nav: Navigator,
+  cond: ComparisonConditions,
+  ctx: PlatformEnterContext | undefined,
+  settleAnchors: UiSelector[],
+  timeoutMs: number,
+): Promise<RawQuoteFacts | undefined> {
+  let r: { nodes: UiNode[]; dump: string }
+  try {
+    r = await nav.waitAny(settleAnchors, '结算页', timeoutMs)
+  } catch {
+    // 结算页锚点（含 tms_fragment_container）未等到 → 不在结算页。
+    return undefined
+  }
+  const nodes: UiNode[] = r.nodes
+  const dump = r.dump
+
+  const byTree = extractElemeSettle(nodes, cond, dump)
+  if (Number.isFinite(byTree.payable)) return byTree
+
+  // 控件树读不到 → OCR 兜底（饿了么 canvas 自绘）。
+  if (!ctx?.ocr || !nav.screencap) return byTree // 无 OCR 端口/截屏能力：返回低置信供上层提示
+  const roi = settlePanelRoi(nodes)
+  const png = await nav.screencap()
+  const result = await ctx.ocr.read(png, roi)
+  const byOcr = extractElemeSettleFromOcr(result.words, cond, result.text)
+  return byOcr
+}
+
+/**
+ * 结算面板 ROI：从控件树里的 `tms_fragment_container`（右侧结算容器）bounds 取矩形；
+ * 没有则用右半屏（很多平板分栏布局右侧为结算）。避免整屏 OCR 把左侧首页内容混入。
+ */
+export function settlePanelRoi(
+  nodes: UiNode[],
+): { x: number; y: number; w: number; h: number } | undefined {
+  const panel = nodes.find(
+    (n) => n.resourceId && n.resourceId.endsWith('/tms_fragment_container') && n.bounds,
+  )
+  if (!panel?.bounds) {
+    const sb = nodes.find((n) => n.bounds && n.bounds[2] - n.bounds[0] > 0)
+    void sb
+    return undefined
+  }
+  const b = panel.bounds
+  return { x: b[0], y: b[1], w: b[2] - b[0], h: b[3] - b[1] }
+}
+
+function sleep(nav: Navigator, ms: number): Promise<void> {
+  void nav
+  return new Promise((r) => setTimeout(r, ms))
 }

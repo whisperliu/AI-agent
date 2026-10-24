@@ -69,7 +69,10 @@ export async function runCompare(
         if (signal?.aborted) throw new Error('cancelled')
         const strategy = plan.platforms[i]!
         p.update(platformLine(i + 1, n, strategy.id, PHASES.opening))
-        const facts = await strategy.enterSettlePage(deps.driver, plan.cond)
+        const facts = await strategy.enterSettlePage(deps.driver, plan.cond, {
+          ocr: deps.ocr,
+          dataDir: deps.dataDir,
+        })
         p.update(platformLine(i + 1, n, strategy.id, PHASES.settling, verdictOf(facts)))
         const draft = draftFromFacts(
           facts,

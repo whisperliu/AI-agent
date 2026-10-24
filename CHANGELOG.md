@@ -450,6 +450,21 @@
 - **未影响已有行为**：美团 P3 全流程 19 tests 仍全绿；`meituanReal` 公开 API 经 re-export 保持稳定。
 - **更新后状态**：**P4 完成**（多平台 + 策略 + 等价分组），四条 DoD 均落地并可离线判定；下一步 P5 打磨。
 
+### [36] 2026-10-24 16:46 · P4 真机复测（饿了么已登录）：发现 canvas 自绘 → 落地截图 ROI OCR 兜底
+- **为什么**：用户登录饿了么后要求重测真机。实测发现饿了么 **12.9.78（TB321FU 平板）整 App 是 canvas/TMS 自绘**——`uiautomator dump` 全页（首页/搜索/结果/店铺/**结算页**）只有 1 个 `water_mark_view` 节点，**控件树零文本/金额**，此前"控件树锚点导航"路径对饿了么根本不可行（P4 首版仅离线 fixture 验收）。
+- **做了什么**：
+  1. **真实 OCR 适配器**（新增 `src/ocr/tesseract.ts`）：`createTesseractOcr({lang,cachePath})` 包 tesseract.js WASM，逐词返回 `bbox`+置信(0–1)，支持 `roi` 只识别屏幕某矩形；`close()` 释放。`core/container.ts` 在 `ocr.enabled && device.driver=adb` 时构造，否则仍 Mock。
+  2. **饿了么 OCR 抽取**（`src/platform/elemeReal.ts`）：`extractElemeSettleFromOcr(rawWords,cond)` + `ocrMoney`（归一 `Y3.9/y35.9/¥1` 等）+ `clusterOcrRows`（按 y 聚行，解决中文标签被拆 token：`优惠`+`后`）+ `settlePanelRoi`（取 `tms_fragment_container` 右栏 ROI，避开左侧首页）。映射 打包费/配送费/优惠后商品价/免配送费减免/实付；**"已优惠 ¥X"整单汇总绝不当独立 discount 叠加**（防 §5.3 重复扣）。
+  3. **平台契约**（`src/platform/types.ts`）：`enterSettlePage(driver,cond,ctx?)` 增可选 `PlatformEnterContext{ocr,dataDir}`（注入式，platform 只依赖 `ocr/reader.ts` 接口）；`runner` 透传 `deps.ocr`。`navigator` 增可选 `screencap()`。
+  4. **runElemeReal 重写为 OCR 感知**：`tryReadSettle` 控件树优先，读不到实付且有 OCR 端口 → 截图 ROI OCR；导航在 canvas 下用 resourceId 锚点 + `tapPoint` 坐标。
+  5. **脱敏 fixture** `test/fixtures/eleme-settle.ocr.json`（真实结算页右栏 OCR 逐词，地址/手机号/姓名已剔除）。
+- **验证方式**：
+  - **真机实跑（只读，未点提交/支付）**：`eleme.enterSettlePage(driver,cond,{ocr})` → `payable=20.8`（截图"立即支付 ¥20.8"）；`confidence=low, balanced=false, delta=-1, needsConfirm=true`——因 OCR 偶发丢"打包费 ¥1"数字，**如实降级不硬凑**（§6.3.4）。
+  - **离线**：`pnpm check` **126/126 全绿**；`test/platform-p4.test.ts` 20 tests（+OCR 抽取 4：合成行/真实脱敏 fixture/ocrMoney/clusterRows/settlePanelRoi）；`src/price` 行覆盖 97.15%。
+- **红线**：全程只读；饥饿了么未登录时曾触发实名/短信验证 → 立即停止零点击（本次由用户自行登录）；OCR 不含下单/支付路径。
+- **边界**：饿了么 canvas 无文案钩子，**全自动导航**（搜索→选店→加购→去结算）不如美团稳定，需持续按真机截图回填坐标/锚点；当前**稳定可验收的是"结算页 OCR 读数"**（payable 正确）。
+- **更新后状态**：P4 真机复测完成，饿了么拿到可用 OCR 读数路径；多平台在"结算页读数"层面对两平台均可用（美团=控件树，饿了么=OCR）。
+
 ---
 
 ## 追加条目的模板（供后续每轮使用）
@@ -465,4 +480,4 @@
 
 ---
 
-*最后更新：2026-10-24 16:10 +08:00*
+*最后更新：2026-10-24 16:46 +08:00*

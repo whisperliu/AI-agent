@@ -35,7 +35,7 @@
 | 项 | 状态 |
 |---|---|
 | 阶段 | **P0–P4 完成**：纯核心 + 插件骨架/异步任务/Mock 全链路（P0/P1）+ 真机通道（P2）+ 美团真机全流程抓价（P3）+ **多平台（饿了么）+ 策略四态 + 谨慎互斥 + 统一输入快照分组（P4）**；下一步 **P5 打磨** |
-| 代码 | `src/*` 全部模块落地；`price_agent` 异步工具可用（Mock/真机）；P4 新增 `price/strategies.ts`（策略四态+互斥）、`platform/elemeReal.ts`、`platform/settleRows.ts`、`platform/navigator.ts`，并贯通 `snapshotId/hash` |
+| 代码 | `src/*` 全部模块落地；`price_agent` 异步工具可用（Mock/真机）；P4 新增 `price/strategies.ts`（策略四态+互斥）、`platform/elemeReal.ts`、`platform/settleRows.ts`、`platform/navigator.ts`、`ocr/tesseract.ts`（饿了么 canvas 自绘 → ROI OCR 兜底），并贯通 `snapshotId/hash` |
 | 工具链 | TypeScript 5.9 / ESLint 10 / Prettier 3 / `node --test`；`pnpm check` 全绿（120 tests，`src/price` 行覆盖 97%+） |
 | 文档 | 本套四件（本文 + `docs/` 三件）+ `CHANGELOG.md` |
 | 已锁定决策 | Android 全自动 adb 无线调试；首期美团+饿了么；结算页实付为准；招行周三+美团神券基准；先 P0+P1（Mock 先行）；无线调试方案 c（详见 §11） |

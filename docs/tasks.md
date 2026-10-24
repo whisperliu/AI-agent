@@ -5,7 +5,7 @@
 
 **当前进度**：基建完成 + **P0 完成** + **P1 完成**（插件骨架 + 异步任务 + Mock，全链路跑通）+ **P2 完成**（adb 驱动/连接重连/能力探测/弹窗恢复/截图留证/只读演练脚本；**真机 §8.4 最小实验 PASS：Lenovo TB321FU / Android 16**）+ **P3 完成**（**美团真机"首页→搜索→选店→选规格/加购→去结算→读实付"全流程自动化跑通并验收** —— 券前/神抢手两种结算页布局抽取，`payable` 正确、`arithmetic.balanced`、`confidence=high`、`needsConfirm=false`；"待使用红包"作 presumed optionalSaving 不计入；`tapPoint` 安全点按、验证码 `NeedsHumanError` 零点击）+ **P4 完成**（**多平台 + 策略 + 等价分组**：饿了么真机结算页抽取（id/坐标行双路径）+ 策略四态（`price/strategies.ts`，配置最多 `presumed`、绝不假断言可用）+ 谨慎跨平台互斥（默认不互斥，显式才降级）+ 统一输入快照 `snapshotId/hash` 贯通 Quote 并在 `compare` 强制同快照、偏离归不可比组；离线 **120 tests** 全绿，`src/price` 行覆盖 97%+）。下一步 **P5 打磨**。
 
-> **P4 真机边界**：饿了么 App 在真机上未登录时触发**实名/短信验证（身份验证 + 短信验证码）**，按 AGENTS.md §0 红线 2 **立即停止、未做任何识别/点击**（已把设备退回桌面）。饿了么真机全流程自动跑通需用户本人先登录（属人工介入）；本阶段多平台能力以**离线 fixture 回放 + 真实代码路径单测**验收，设备侧仅做只读探测。
+> **P4 真机边界（用户已登录后复测，2026-10-24）**：饿了么**整个 App 是 canvas/TMS 自绘**——`uiautomator dump` 全页仅 1 个 `water_mark_view` 节点，首页/搜索/结果/店铺/**结算页**均无可读控件树 → 控件树路径**不可行**。已落地**截图 ROI OCR** 兜底（`ocr/tesseract.ts` + `elemeReal.extractElemeSettleFromOcr` + `settlePanelRoi` 取右栏 `tms_fragment_container`）：真机实跑读到 **payable=¥20.8**（截图"立即支付 ¥20.8"）；因 OCR 偶发丢"打包费 ¥1"数字 → delta −1 → 如实 `confidence=low / needsConfirm=true`（不硬凑，符合 §6.3.4）。饿了么**全自动导航**（canvas 无文案钩子、只能靠 resourceId + 坐标）不如美团稳定；当前**可稳定验收的是"结算页 OCR 读数"**。全程只读，未点提交/支付。
 
 
 ---

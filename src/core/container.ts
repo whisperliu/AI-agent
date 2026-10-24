@@ -17,7 +17,9 @@ import { MOCK_SETTLE_PAGES } from '../device/mock-data.ts'
 import { createAdbDriver } from '../device/adb.ts'
 import type { Ocr } from '../ocr/reader.ts'
 import { createMockOcr } from '../ocr/mock.ts'
+import { createTesseractOcr } from '../ocr/tesseract.ts'
 import { MOCK_OCR_ENTRIES } from '../device/mock-data.ts'
+import { join } from 'node:path'
 import type { TaskRecord } from '../price/model.ts'
 
 /** 进度端口：屏蔽 `ctx.jobs` 的具体实现（task 只依赖它）。 */
@@ -137,6 +139,10 @@ export function buildCapabilities(
           stepTimeoutMs: config.task.stepTimeoutMs,
         })
       : createMockDriver({ settlePages: MOCK_SETTLE_PAGES })
-  const ocr = createMockOcr(MOCK_OCR_ENTRIES)
+  // OCR：真机开 ocr.enabled 时用真实 tesseract（饿了么 canvas 自绘必须 OCR）；否则 Mock。
+  const ocr =
+    config.ocr.enabled && config.device.driver === 'adb'
+      ? createTesseractOcr({ cachePath: join(opts.dataDir, 'ocr-cache') })
+      : createMockOcr(MOCK_OCR_ENTRIES)
   return { driver, ocr, clock: new SystemClock(), serial, dataDir: opts.dataDir }
 }

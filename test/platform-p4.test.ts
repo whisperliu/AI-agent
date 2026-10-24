@@ -334,3 +334,94 @@ test('full chain (Mock 双平台): 同一快照派生、分组比价、cheapest 
     await env.cleanup()
   }
 })
+
+// ───────────────────── 饿了么 canvas 自绘 → ROI OCR 抽取（P4 真机实测结论） ─────────────────────
+
+import { extractElemeSettleFromOcr, ocrMoney, settlePanelRoi } from '../src/platform/elemeReal.ts'
+import { parseUiNodes } from '../src/device/uixml.ts'
+import type { OcrWord } from '../src/ocr/reader.ts'
+
+function ocrWord(t: string, x: number, y: number, c = 0.9): OcrWord {
+  return { t, c, bbox: { x, y, w: Math.max(20, t.length * 20), h: 30 } }
+}
+
+test('ocrMoney: 归一各种 OCR 金额串', () => {
+  assert.equal(ocrMoney('¥20.8'), 20.8)
+  assert.equal(ocrMoney('Y3.9'), 3.9)
+  assert.equal(ocrMoney('y35.9'), 35.9)
+  assert.equal(ocrMoney('xy20.8'), 20.8)
+  assert.equal(ocrMoney('¥1'), 1)
+  assert.ok(Number.isNaN(ocrMoney('无金额')))
+})
+
+test('eleme OCR 抽取（canvas 自绘）：标签→金额 + 实付，confidence 永不 high', () => {
+  // 真机布局：打包费 ¥1、配送费 ¥3.9、"已优惠 ¥35.9"（整单汇总，不当独立优惠）、立即支付 ¥20.8
+  const words: OcrWord[] = [
+    ocrWord('打包费', 100, 800),
+    ocrWord('¥1', 2300, 800),
+    ocrWord('配送费', 100, 860),
+    ocrWord('¥3.9', 2280, 860),
+    ocrWord('已优惠', 2100, 1000, 0.95),
+    ocrWord('¥35.9', 2300, 1000, 0.95),
+    ocrWord('立即支付', 1600, 1400),
+    ocrWord('¥20.8', 2000, 1400, 0.9),
+  ]
+  const facts = extractElemeSettleFromOcr(words, cond(), 'ocr-text')
+  assert.equal(facts.payable, 20.8)
+  const kinds = Object.fromEntries(facts.fees.map((f) => [f.kind, f.amount]))
+  assert.equal(kinds.packing, 1)
+  assert.equal(kinds.delivery, 3.9)
+  // "已优惠 ¥35.9" 是整单汇总，不得作为独立 discount 叠加（防重复扣，§5.3）
+  assert.equal(
+    facts.discounts.some((d) => d.amount === 35.9),
+    false,
+  )
+  // OCR 命中：永不 high（§6.3.4）
+  assert.notEqual(facts.confidence, 'high')
+  assert.equal(facts.byField.payable, 'ocr')
+  const quote = priceQuote({
+    platform: 'eleme',
+    store: { name: facts.storeName, matchedScore: 1 },
+    item: { name: facts.itemName, qty: facts.qty, matchedScore: 1 },
+    fees: facts.fees,
+    discounts: facts.discounts,
+    payable: facts.payable,
+    extraction: { confidence: facts.confidence, byField: facts.byField },
+    evidence: {
+      quoteId: 'q',
+      platform: 'eleme',
+      storeName: facts.storeName,
+      itemSpec: facts.itemName,
+      qty: facts.qty,
+      feeBreakdown: facts.fees,
+      rawExtraction: { ocrText: 'ocr' },
+      capturedAt: '2026-10-24T13:00:00+08:00',
+      validUntil: '2026-10-24T13:10:00+08:00',
+      redaction: 'applied',
+    },
+  })
+  // OCR 路径 quote 的 confidence 永不 high
+  assert.notEqual(quote.extraction.confidence, 'high')
+})
+
+test('eleme OCR 抽取：真实脱敏 fixture（打包费数字被 OCR 丢弃 → 低置信 needsConfirm）', async () => {
+  const raw = JSON.parse(await readFile(join(FIX, 'eleme-settle.ocr.json'), 'utf8')) as {
+    words: { t: string; c: number; x0: number; y0: number; x1: number; y1: number }[]
+  }
+  const words: OcrWord[] = raw.words.map((w) => ({
+    t: w.t,
+    c: w.c / 100,
+    bbox: { x: w.x0, y: w.y0, w: w.x1 - w.x0, h: w.y1 - w.y0 },
+  }))
+  const facts = extractElemeSettleFromOcr(words, cond({ item: '手撕烤鸭（整只）+米饭' }), 'ocr')
+  // 实付 20.8 稳定可读
+  assert.equal(facts.payable, 20.8)
+  // 打包费数字未被 OCR 读出 → 保守低置信（不硬凑）
+  assert.equal(facts.confidence, 'low')
+})
+
+test('settlePanelRoi: 从 tms_fragment_container bounds 取右栏 ROI', () => {
+  const xml = `<hierarchy><node resource-id="me.ele:id/tms_fragment_container" class="android.widget.RelativeLayout" clickable="false" bounds="[1280,0][2560,1570]"/></hierarchy>`
+  const roi = settlePanelRoi(parseUiNodes(xml))
+  assert.deepEqual(roi, { x: 1280, y: 0, w: 1280, h: 1570 })
+})

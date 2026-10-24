@@ -13,7 +13,7 @@ import { enterViaOpenTag, SETTLE_ANCHOR } from './extract.ts'
 import { createNavigator } from './navigator.ts'
 import { runElemeReal } from './elemeReal.ts'
 import { GENERIC_SETTLE_SELECTORS } from './selectors/generic.ts'
-import type { PlatformStrategy, RawQuoteFacts } from './types.ts'
+import type { PlatformEnterContext, PlatformStrategy, RawQuoteFacts } from './types.ts'
 
 function isRealDevice(driver: Driver): boolean {
   return typeof (driver as { probe?: unknown }).probe === 'function'
@@ -24,9 +24,14 @@ export const eleme: PlatformStrategy = {
   appId: 'me.ele',
   settleAnchor: SETTLE_ANCHOR,
   selectors: GENERIC_SETTLE_SELECTORS,
-  async enterSettlePage(driver: Driver, cond: ComparisonConditions): Promise<RawQuoteFacts> {
+  async enterSettlePage(
+    driver: Driver,
+    cond: ComparisonConditions,
+    ctx?: PlatformEnterContext,
+  ): Promise<RawQuoteFacts> {
     if (isRealDevice(driver)) {
-      return runElemeReal(createNavigator(driver), cond)
+      // 饿了么为 canvas 自绘，控件树不可读 → 真机走 OCR 兜底（需要 ctx.ocr）。
+      return runElemeReal(createNavigator(driver), cond, ctx)
     }
     return enterViaOpenTag(driver, 'eleme', cond)
   },

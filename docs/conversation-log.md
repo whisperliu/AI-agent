@@ -243,7 +243,8 @@
     {"n":17,"at":"10-24 15:00","user":"(goal round 继续)","intent":"冷启动全流程 搜索→选店→加购→结算","result":"首页首屏弹出字序验证码(无字WebView) → 按红线 §0-2 立即停止，未识别/未点击；补 runMeituanReal 真实代码路径 NeedsHumanError+零点击回归","verify":"classifyObstruction=captcha；pnpm check 102/102","status":"blocked(需人工过验证码)"},
     {"n":18,"at":"10-24 15:37","user":"(goal round 继续，验证码已清除)","intent":"P3 真机冷启动全流程自动化跑通","result":"enterSettlePage(driver) 从首页全自动 搜索→选店→选规格/加购→去结算→读实付 = payable 19.9 balanced；修 id 后缀匹配/首页入口/banner dump/共减误判/神抢手变体/新增安全 tapPoint","verify":"真机 payable=19.9 balanced=true needsConfirm=false；pnpm check 104/104；19 P3 tests + 8 脱敏 fixture","status":"ok(P3 全流程 PASS)"},
     {"n":19,"at":"10-24 15:44","user":"有一个问题，现在对话跑传递图片太多了…改进一下 / 收尾","intent":"降低上下文占用 + 收尾","result":"新增 scripts/evidence-inspect.mjs(dump→紧凑文本+坐标，替代读图)；AGENTS §2 加省上下文强制规则；README 补说明；清理 35MB 调试截图→1.6MB；本文件最终快照","verify":"pnpm check 104/104；脚本对脱敏 fixture 输出正确","status":"ok"},
-    {"n":20,"at":"10-24 16:10","user":"下一步进行P4","intent":"P4 多平台+策略+等价分组","result":"config 增 platforms.strategies;新增 price/strategies.ts(四态+谨慎互斥);Quote 带 snapshotId/hash 且 compare 强制同快照(偏离归不可比组);新增 platform/elemeReal+selectors/eleme;抽 settleRows/navigator 共享原语;runner 集成策略 savings 与互斥","verify":"pnpm check 122/122 全绿; src/price 行覆盖 97.15%(strategies 100%); 16 P4 tests + eleme 脱敏 fixture; 饿了么真机遇实名/短信验证→红线即停零点击","status":"ok(P4 完成)"}
+    {"n":20,"at":"10-24 16:10","user":"下一步进行P4","intent":"P4 多平台+策略+等价分组","result":"config 增 platforms.strategies;新增 price/strategies.ts(四态+谨慎互斥);Quote 带 snapshotId/hash 且 compare 强制同快照(偏离归不可比组);新增 platform/elemeReal+selectors/eleme;抽 settleRows/navigator 共享原语;runner 集成策略 savings 与互斥","verify":"pnpm check 122/122 全绿; src/price 行覆盖 97.15%(strategies 100%); 16 P4 tests + eleme 脱敏 fixture; 饿了么真机遇实名/短信验证→红线即停零点击","status":"ok(P4 完成)"},
+    {"n":21,"at":"10-24 16:46","user":"手机上饿了么已经登录，重新测试","intent":"饿了么真机复测","result":"无线调试端口变更→用 ~/.android 旧key重连成功;实测饿了么整App为canvas/TMS自绘(dump仅水印节点,结算页无文本);落地真实 OCR(tesseract)+elemeReal.extractElemeSettleFromOcr+settlePanelRoi(右栏tms_fragment_container裁剪);真机读到 payable=20.8","verify":"真机 eleme.enterSettlePage(driver,cond,{ocr}) → payable=20.8, confidence=low, balanced=false delta=-1, needsConfirm=true(OCR丢打包费¥1数字→如实降级);pnpm check 126/126;src/price覆盖97.15%","status":"ok(饿了么结算页 OCR 读数 PASS)"}
   ],
   "fixes": [
     {"topic":"job owner","file":"src/core/jobs-adapter.ts","detail":"owner=exec.agent.id 贯通"},
@@ -272,4 +273,4 @@
 
 ---
 
-*会话快照：2026-10-24 16:10 · P0–P3 已提交（HEAD `55e93f6`）；**P2 真机 §8.4 PASS（Lenovo TB321FU）**；**P3 真机全流程 PASS（payable=19.9 balanced）**；**P4 完成（多平台饿了么 + 策略四态 + 谨慎互斥 + 统一输入快照分组；pnpm check 122/122、src/price 覆盖 97.15%）**；饿了么真机遇实名/短信验证按红线即停（需用户先登录）；下一步 P5 打磨。*
+*会话快照：2026-10-24 16:46 · P0–P3 已提交（HEAD `55e93f6`），P4 已提交 `ad130e5`；**P2 真机 §8.4 PASS（Lenovo TB321FU）**；**P3 美团真机全流程 PASS（payable=19.9 balanced）**；**P4 完成**（多平台 + 策略四态 + 谨慎互斥 + 统一输入快照分组）；**P4 真机复测**：饿了么整 App canvas 自绘，落地 ROI OCR 兜底，真机读到 payable=¥20.8（OCR 低置信→needsConfirm，如实不硬凑）；pnpm check 126/126、src/price 覆盖 97.15%；下一步 P5 打磨。*

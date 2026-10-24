@@ -16,6 +16,8 @@ export interface Navigator {
   nodes(): Promise<UiNode[]>
   /** 当前界面原始 dump（写证据）。 */
   dump(): Promise<string>
+  /** 截屏（PNG 字节），用于 canvas 自绘 App 的 OCR 兜底。可选。 */
+  screencap?(): Promise<Uint8Array>
   /** 按选择器点击（安全护栏在 driver.tap 内部）。 */
   tap(sel: UiSelector, what: string): Promise<void>
   /** 按屏幕坐标点击（安全：driver.tapPoint 内部会解析命中节点并过 assertTapSafe）。可选（Mock 无）。 */
@@ -45,6 +47,7 @@ export function createNavigator(driver: Driver, timeoutMs = 8000): Navigator {
   return {
     nodes: async () => parseUiNodes(await driver.dump()),
     dump: () => driver.dump(),
+    screencap: () => driver.screencap(),
     tap: (sel, _what) => driver.tap(sel),
     tapPoint: async (x, y, _what) => {
       if (driver.tapPoint) return driver.tapPoint(x, y)

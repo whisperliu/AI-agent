@@ -3,6 +3,7 @@
  * 层：strategy。依赖 `price/model` 类型与 `device/driver` 接口，**不 import** 设备实现。
  */
 import type { Driver } from '../device/driver.ts'
+import type { Ocr } from '../ocr/reader.ts'
 import type {
   ComparisonConditions,
   DiscountKind,
@@ -57,6 +58,21 @@ export interface PlatformStrategy {
   settleAnchor: string
   /** 控件选择器集中登记（App 改版只改 selectors/）。 */
   selectors: Record<string, string>
-  /** 打开 App 并进入结算页。 */
-  enterSettlePage(driver: Driver, cond: ComparisonConditions): Promise<RawQuoteFacts>
+  /**
+   * 打开 App 并进入结算页。
+   * `ctx` 可选传入 OCR 端口（仅当平台在控件树不可读、需截图 OCR 兜底时使用，如饿了么 canvas 自绘）。
+   */
+  enterSettlePage(
+    driver: Driver,
+    cond: ComparisonConditions,
+    ctx?: PlatformEnterContext,
+  ): Promise<RawQuoteFacts>
+}
+
+/** 进入结算页时可用的附加能力（注入式，platform 只依赖接口）。 */
+export interface PlatformEnterContext {
+  /** OCR 端口（仅当 controls 不可读时用；未提供表示不启用 OCR）。 */
+  ocr?: Ocr
+  /** 截图的落盘目录（证据留存）。 */
+  dataDir?: string
 }
