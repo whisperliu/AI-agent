@@ -20,8 +20,11 @@ export type ConfigInput = Infer<typeof Config>
 | `device.autoReconnect / unicodeIme` | boolean | `true` | 掉线自动 `adb connect` 重连一次（§8.3） |
 | `task.stepTimeoutMs` / `pageTimeoutMs` / `taskTimeoutMs` | natural | 8000 / 20000 / 90000 | 三级超时 |
 | `task.idempotencyTtlMinutes` | natural | 30 | 幂等保留期（§7.6） |
+| `task.retryAttempts` | natural | 2 | **P5**：平台抽取总尝试次数（含首次）；**仅瞬时故障重试**，验证码/支付绝不重试 |
 | `evidence.ttlMinutes` | natural | 10 | 证据有效期（§6.5） |
-| `evidence.retainMax` | natural | 50 | 证据保留上限 |
+| `evidence.retainMax` | natural | 50 | 证据保留上限（组数） |
+| `evidence.retainDays` | natural | 7 | **P5**：证据保留天数（与 retainMax **取先到者**清理） |
+| `evidence.redact` | boolean | true | **P5**：截图默认脱敏；无法脱敏则不落图 |
 | `ocr.enabled` | boolean | false | P1 仅 MockOcr |
 | `platforms.<id>.enabled/appId/priceToleranceYuan` | — | — | 平台开关与勾稽容差（§5.1/§6.3） |
 | `platforms.<id>.strategies[]` | 数组 | `[]` | **平台级优惠策略（P4，§5.1）**：`id/kind/name/condition{minSpend,weekday}/discount{type,amount,cap}/autoApplied/quota{dailyLimit,monthlyLimit,totalQuota,lastUsedAt}/exclusiveGroup/crossPlatformExclusive`。语义见 §5.4–§5.6：配置最多产出 `presumed`（不假断言可用），`autoApplied=true` 即 `alreadyIncludedInPayable`；跨平台默认不互斥 |

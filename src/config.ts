@@ -30,6 +30,11 @@ export const Config = z.object({
       /** 锁等待上限；超时 → 503 BUSY（§7.7 R4）。 */
       lockWaitMs: z.natural().default(5000),
       idempotencyTtlMinutes: z.natural().default(30),
+      /**
+       * 平台抽取的**总尝试次数**（含首次，P5）。仅对**瞬时故障**（adb 掉线/dump 拿不到 idle/
+       * 截屏失败）重试；验证码/支付/业务终态错误**绝不重试**（core/retry.ts）。默认 2。
+       */
+      retryAttempts: z.natural().default(2),
     })
     .default({
       stepTimeoutMs: 8000,
@@ -37,13 +42,18 @@ export const Config = z.object({
       taskTimeoutMs: 90000,
       lockWaitMs: 5000,
       idempotencyTtlMinutes: 30,
+      retryAttempts: 2,
     }),
   evidence: z
     .object({
       ttlMinutes: z.natural().default(10),
       retainMax: z.natural().default(50),
+      /** 证据保留天数（与 retainMax **取先到者**清理由 task/cleanup.ts 执行，§6.5）。默认 7。 */
+      retainDays: z.natural().default(7),
+      /** 截图默认脱敏（P5）：true 时落盘前对敏感区域掩码；无法脱敏则不落图。默认 true。 */
+      redact: z.boolean().default(true),
     })
-    .default({ ttlMinutes: 10, retainMax: 50 }),
+    .default({ ttlMinutes: 10, retainMax: 50, retainDays: 7, redact: true }),
   ocr: z.object({ enabled: z.boolean().default(false) }).default({ enabled: false }),
   platforms: z
     .dict(

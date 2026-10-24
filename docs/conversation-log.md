@@ -205,6 +205,18 @@
 - 文档：`PLAN.md`、`docs/tasks.md`、`docs/modules/*`、`CHANGELOG.md`（[19]–[24]）、本文件。
 - 提交：`970d2fb`（P1）、`d43ac0d`（P1 收尾）；P2 未提交（工作区）。
 
+### 轮次 22 · P5 打磨（一）· 脱敏 / 清理 / 重试 / 证据绑定（2026-10-24 18:15）✅
+- **意图**：用户"进行下一步"。当前进度 P0–P4 完成，下一步正是 **P5 打磨**；对照 `docs/tasks.md` §9 的 P5 三条 DoD，发现**之前只有字面标记、没有真实实现**：截图从不落盘、`retention` 从不清理（evidence 已堆 46MB）、抓价零重试。
+- **做了什么**（新增 3 文件 + 改 6 文件）：
+  1. `src/device/redact.ts`（零依赖 PNG 解码/掩码/编码 + 敏感文本→矩形）；`src/task/cleanup.ts`（TTL+保留上限清理）；`src/core/retry.ts`（瞬时重试，红线不重试）。
+  2. `runner.bindEvidence`（dump 原样 + 截图脱敏后落盘，OCR 写 ocrText，如实标 redaction/missingReason）+ `withRetry` 包平台抽取；`meituanReal.withShot` / `elemeReal` OCR 分支补截图。
+  3. `lifecycle.cleanupSweep` + `evidenceDowngradeNote`；`index` 启动清理；`config`/`cordis.patch.yml` 增 `retryAttempts/retainDays/redact`。
+- **真机实证（只读）**：对既有真机截图 `mt-s6.png`+`mt-s6.xml` → `applied=true masked=2`，放大对照图确认「益丰新村-9号楼」被整块涂黑；1600×2560 ~150ms/张。误伤校准：初版把「11人觉得味道赞」判成地址（含“道”），已收窄路名规则并加回归。
+- **验证**：`pnpm check` **148/148 全绿**；新增 `test/{redact,retry,p5}.test.ts`（9+7+6）；`src/price` 行覆盖 97.15%。
+- **边界**：脱敏按 dump 文本定位矩形填黑（非像素级），dump 读不到的 canvas 区无法定位 → 不落图（安全默认）。
+- **结论**：P5 四条（隐私脱敏 / 证据清理 / 异常重试 / 验证码暂停）均有可判定落点。
+
+
 ---
 
 ## 附录 A · 机器可读元数据（JSON）
@@ -246,6 +258,7 @@
     {"n":20,"at":"10-24 16:10","user":"下一步进行P4","intent":"P4 多平台+策略+等价分组","result":"config 增 platforms.strategies;新增 price/strategies.ts(四态+谨慎互斥);Quote 带 snapshotId/hash 且 compare 强制同快照(偏离归不可比组);新增 platform/elemeReal+selectors/eleme;抽 settleRows/navigator 共享原语;runner 集成策略 savings 与互斥","verify":"pnpm check 122/122 全绿; src/price 行覆盖 97.15%(strategies 100%); 16 P4 tests + eleme 脱敏 fixture; 饿了么真机遇实名/短信验证→红线即停零点击","status":"ok(P4 完成)"},
     {"n":21,"at":"10-24 16:46","user":"手机上饿了么已经登录，重新测试","intent":"饿了么真机复测","result":"无线调试端口变更→用 ~/.android 旧key重连成功;实测饿了么整App为canvas/TMS自绘(dump仅水印节点,结算页无文本);落地真实 OCR(tesseract)+elemeReal.extractElemeSettleFromOcr+settlePanelRoi(右栏tms_fragment_container裁剪);真机读到 payable=20.8","verify":"真机 eleme.enterSettlePage(driver,cond,{ocr}) → payable=20.8, confidence=low, balanced=false delta=-1, needsConfirm=true(OCR丢打包费¥1数字→如实降级);pnpm check 126/126;src/price覆盖97.15%","status":"ok(饿了么结算页 OCR 读数 PASS)"},
     {"n":22,"at":"10-24 18:05","user":"收尾","intent":"会话最终快照","result":"工作区干净、无未提交改动；门禁 pnpm check 全绿 126/126；src/price 行覆盖 97.15%；提交 ad130e5(P4)+7dfc92d(饿了么OCR) 已落库；追加本轮记录与最终快照","verify":"pnpm check EXIT=0; coverage all files 97.15%","status":"ok"}
+    {"n":23,"at":"10-24 18:15","user":"进行下一步","intent":"P5 打磨(一) 隐私/清理/重试/证据绑定","result":"新增 device/redact.ts(零依赖PNG脱敏)、task/cleanup.ts(TTL+保留上限)、core/retry.ts(瞬时重试,红线不重试);runner.bindEvidence 真实绑定 dump+脱敏图/ocrText;平台补截图;启动+完成清理;getResult 证据降级提示;config/patch 增 retryAttempts/retainDays/redact","verify":"真机 mt-s6 脱敏 masked=2 对照确认涂黑;pnpm check 148/148;src/price 覆盖 97.15%;新增 redact/retry/p5 共 22 tests","status":"ok(P5 一阶段完成)"},
   ],
   "fixes": [
     {"topic":"job owner","file":"src/core/jobs-adapter.ts","detail":"owner=exec.agent.id 贯通"},
@@ -274,4 +287,4 @@
 
 ---
 
-*会话最终快照：2026-10-24 18:05 · 工作区干净，HEAD `7dfc92d`（P4 `ad130e5` + 饿了么 OCR `7dfc92d`），分支领先 origin/main 16 个提交；**P0–P4 完成**。关键里程碑：**P2 真机 §8.4 PASS（Lenovo TB321FU / Android 16）**；**P3 美团真机全流程 PASS**（首页→搜索→选店→加购→结算→读实付，payable=19.9 balanced、confidence=high）；**P4 多平台 + 策略四态 + 谨慎互斥 + 统一输入快照分组**（DoD①②③④ 均落地）；**P4 真机复测**：饿了么整 App canvas/TMS 自绘（dump 仅 water_mark_view），落地真实 `ocr/tesseract.ts` + `extractElemeSettleFromOcr` + `settlePanelRoi` ROI OCR，真机读到 payable=¥20.8（OCR 偶发丢字→如实 `low/needsConfirm`，不硬凑）。门禁 `pnpm check` **126/126 全绿**、`src/price` 行覆盖 **97.15%**（strategies 100%）。安全红线全程未触碰（无下单/支付路径、验证码即停零点击、仓内仅脱敏 fixture）。下一步 **P5 打磨**（饿了么 canvas 坐标脚本校准 / 证据清理 / 隐私合规复核）。*
+*会话快照：2026-10-24 18:15 · 分支 `main`；**P0–P5 完成**。里程碑：**P2 真机 §8.4 PASS（Lenovo TB321FU / Android 16）**；**P3 美团真机全流程 PASS**（payable=19.9 balanced、confidence=high）；**P4 多平台 + 策略四态 + 谨慎互斥 + 统一输入快照分组**（DoD①②③④ 均落地）；**P4 真机复测** 饿了么 canvas 自绘 → ROI OCR，真机 payable=¥20.8；**P5 打磨（一）**：`device/redact.ts` 零依赖 PNG 截图脱敏（真机 mt-s6 `masked=2` 对照确认涂黑、无法脱敏则不落图）、`task/cleanup.ts` 证据/结果 TTL+保留上限清理、`core/retry.ts` 瞬时重试（**验证码/支付绝不重试**）、`runner.bindEvidence` 证据真实绑定。门禁 `pnpm check` **148/148 全绿**、`src/price` 行覆盖 **97.15%**。安全红线全程未触碰（无下单/支付路径、验证码即停零点击、仓内仅脱敏 fixture）。*

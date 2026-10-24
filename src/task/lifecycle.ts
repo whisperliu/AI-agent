@@ -2,7 +2,7 @@
  * task/lifecycle.ts — 开始 / 取消 / 重取 / 重启恢复 / 过期（§7.5、§7.6、§7.7）。
  * 层：orchestration。对外只暴露 startTask/getResult/listTasks/cancel（§4.4 task 公开 API）。
  */
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import type { Deps, ProgressPort } from '../core/container.ts'
@@ -40,6 +40,7 @@ import {
   saveTask,
 } from './store.ts'
 import { sha256 } from './hash.ts'
+import { cleanupEvidence, cleanupResults } from './cleanup.ts'
 
 /** 进程内活跃任务登记（崩溃恢复里区分"processing 但是否有活进程"）。 */
 const activeTasks = new Set<string>()
@@ -168,6 +169,8 @@ async function runTask(deps: Deps, params: RunTaskParams): Promise<void> {
 
     // 结果原子写文件（§7.5(5)）：写成功后才把记录标 completed。
     const resultPath = await writeResult(deps, taskId, runToken, result)
+    // 完成即触发一次证据/结果清理（尽力而为，§6.5）。
+    await cleanupSweep(deps)
     const validUntil = new Date(
       deps.clock.now() + deps.config.evidence.ttlMinutes * 60_000,
     ).toISOString()
@@ -222,8 +225,9 @@ export async function getResult(deps: Deps, taskId: string): Promise<GetResultRe
       return { taskId, status: 'expired', note: '结果已过期，请重新核价' }
     }
     const result = await readVerifiedResult(rec)
+    const note = await evidenceDowngradeNote(result)
     await patch(deps, taskId, { consumed: true })
-    return { taskId, status: 'completed', result }
+    return { taskId, status: 'completed', result, note }
   }
 
   return { taskId, status: rec.status, error: rec.error }
@@ -418,6 +422,52 @@ async function readVerifiedResult(rec: TaskRecord): Promise<CompareResult> {
     throw new Error('结果 runToken 不匹配（可能来自已取消/过期运行），结果不可用')
   }
   return parsed.result
+}
+
+/**
+ * 证据缺失降级（§6.5）：若报价声明的 `screenshotPath` 已**不存在**（如被清理），
+ * 且证据已无法复核，则在 note 里如实提示"截图证据已清理，需重新核价/人工复核"。
+ * 只读文件系统元信息，不改结果内容本身。
+ */
+async function evidenceDowngradeNote(result: CompareResult): Promise<string | undefined> {
+  const all = result.groups.flatMap((g) => g.quotes)
+  if (all.length === 0) return undefined
+  let missing = 0
+  for (const q of all) {
+    const p = q.evidence?.screenshotPath
+    if (!p) continue
+    try {
+      await stat(p)
+    } catch {
+      missing++
+    }
+  }
+  if (missing > 0) return `${missing} 条报价的截图证据已清理（本地留存策略），如需复核请重新核价`
+  return undefined
+}
+
+/**
+ * 证据/结果按 TTL + 保留上限清理（§6.5 · P5）。**尽力而为**：任何错误都不影响主流程。
+ * 在"任务完成"与"插件启动"两个时点触发，避免无界堆积（隐私最少留存）。
+ */
+export async function cleanupSweep(deps: Deps): Promise<void> {
+  const now = deps.clock.now()
+  const { retainMax, retainDays } = deps.config.evidence
+  try {
+    await cleanupEvidence({
+      dir: join(deps.dataDir, 'evidence'),
+      retainMax,
+      retainDays,
+      now,
+    })
+  } catch {
+    /* 清理失败不影响主流程 */
+  }
+  try {
+    await cleanupResults({ dir: join(deps.dataDir, 'results'), retainMax, retainDays, now })
+  } catch {
+    /* 同上 */
+  }
 }
 
 function classifyError(err: unknown): { reason: TaskFailureReason; message: string } {

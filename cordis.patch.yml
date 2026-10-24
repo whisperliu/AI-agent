@@ -19,9 +19,12 @@
           taskTimeoutMs: 90000
           lockWaitMs: 5000 # 锁等待上限；超时 → 503 BUSY（§7.7 R4）
           idempotencyTtlMinutes: 30
+          retryAttempts: 2 # P5：仅瞬时故障重试；验证码/支付绝不重试
         evidence:
           ttlMinutes: 10
           retainMax: 50
+          retainDays: 7 # P5：与 retainMax 取先到者清理
+          redact: true # P5：截图默认脱敏，无法脱敏则不落图
         ocr:
           enabled: false # P1: MockOcr only
         platforms:

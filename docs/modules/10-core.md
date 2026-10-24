@@ -11,6 +11,7 @@
 | `locks.ts` | 设备锁 / 快照单飞 / 资源锁 | `withDeviceLock`, `withSnapshotLock`, `withLock` |
 | `safety.ts` | **安全护栏**：拦截下单/支付点击 | `assertTapSafe(target)` |
 | `errors.ts` | 跨模块错误类型 | `BusyError/StateAssertionError/NeedsHumanError/ForbiddenActionError/IdempotencyConflictError/TaskNotFoundError` |
+| `retry.ts` | **瞬时异常重试（P5）**：可重试判定 + 指数退避 | `isRetryable(err)`, `withRetry(fn, opts)` |
 
 ```ts
 interface Deps { driver: Driver; ocr: Ocr; clock: Clock; jobs: JobsPort; tasks: Domain<TaskDomainSpec>; config: AppConfig; dataDir: string; serial: string; lockRoot?: string }
@@ -22,6 +23,7 @@ interface Deps { driver: Driver; ocr: Ocr; clock: Clock; jobs: JobsPort; tasks: 
 - `locks.ts`：**薄封装** `dsh-atomic-write` 的 `withFileLock`（wx 锁 + PID + `ESRCH` 接管），**不要**自己实现锁；锁键：设备 `device-<serial>.lock`、快照 `snapshot-<hash>.lock`（§7.7 R1）。
 - 获取锁超时（库抛 "timed out waiting for the writer lock"）→ 映射 `BusyError`（上层 `503 BUSY`）。
 - `jobs-adapter`：把 `ctx.jobs.start` 的 `JobHandle`（`updateProgress/append`）包成 `ProgressPort`，并转发 `cancel`。task 逻辑只依赖 `JobsPort`，可在测试用内存实现完全离线。
+- `retry.ts`：`isRetryable` **红线优先**——`NeedsHumanError`（验证码/登录/风控）与 `ForbiddenActionError`（下单/支付）**永远不重试**；只重试 adb 掉线 / `uiautomator dump` 无 idle / 截屏拉取失败 / 超时这类瞬时故障。`withRetry` 指数退避、尊重 `signal`、不吞异常。
 - `safety.ts`：**每次 `driver.tap` 前必须调 `assertTapSafe(target)`**；命中下单/支付（`提交订单/立即支付/…`）抛 `ForbiddenActionError`。多语言/大小写/下划线已归一，宁可误拦不可放过（AGENTS.md §0 红线 1 的程序化防线）。
 
 ## 本模块必须遵守的共享规则（清单）

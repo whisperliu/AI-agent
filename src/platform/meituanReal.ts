@@ -450,7 +450,7 @@ export async function runMeituanReal(
   //    这是真机最省事、最安全（点击最少）的路径，避免在已验证的结算页上误点。
   try {
     const { nodes, dump } = await nav.waitAny(settle, '结算页(已在)', 1500)
-    return extractMeituanSettle(nodes, cond, dump)
+    return withShot(extractMeituanSettle(nodes, cond, dump), nav)
   } catch {
     // 不在结算页 → 走完整导航（下一段）。
   }
@@ -508,7 +508,7 @@ export async function runMeituanReal(
     await nav.tap({ text: '去结算' }, '去结算')
     try {
       const ok = await nav.waitAny(settle, '结算页', 6000)
-      return extractMeituanSettle(ok.nodes, cond, ok.dump)
+      return withShot(extractMeituanSettle(ok.nodes, cond, ok.dump), nav)
     } catch {
       // 未进入结算页 → 重取一帧再试。
       await nav.repaint?.()
@@ -517,7 +517,21 @@ export async function runMeituanReal(
 
   // 8) 最后一次机会：直接等结算页（若已进入）。
   const { nodes, dump } = await nav.waitAny(settle, '结算页', 12000)
-  return extractMeituanSettle(nodes, cond, dump)
+  return withShot(extractMeituanSettle(nodes, cond, dump), nav)
+}
+
+/**
+ * 给抽取事实补一张结算页截图（证据用，P5）。截图**尽力而为**：失败不影响读价；
+ * 落盘前的脱敏由 task/runner.bindEvidence 统一处理（无法脱敏则不会保存原图）。
+ */
+async function withShot(facts: RawQuoteFacts, nav: Navigator): Promise<RawQuoteFacts> {
+  if (!nav.screencap) return facts
+  try {
+    facts.screenshot = await nav.screencap()
+  } catch {
+    // 截图失败：保留 facts（无截图证据），由上层降级。
+  }
+  return facts
 }
 
 /** 供测试/排障：判定某节点是否是"提交订单/支付"类危险控件（只读，不点击）。 */

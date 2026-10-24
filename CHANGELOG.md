@@ -465,6 +465,27 @@
 - **边界**：饿了么 canvas 无文案钩子，**全自动导航**（搜索→选店→加购→去结算）不如美团稳定，需持续按真机截图回填坐标/锚点；当前**稳定可验收的是"结算页 OCR 读数"**（payable 正确）。
 - **更新后状态**：P4 真机复测完成，饿了么拿到可用 OCR 读数路径；多平台在"结算页读数"层面对两平台均可用（美团=控件树，饿了么=OCR）。
 
+### [37] 2026-10-24 18:15 · P5 打磨（一）：截图默认脱敏 + 证据 TTL/保留清理 + 瞬时重试 + 证据真实绑定
+
+- **为什么**：P5 的三条 DoD 一直没真正落到代码上——①「截图默认脱敏且可清理」此前只有 `redaction:'applied'` 的**字面标记**，运行时根本不落截图（`screenshotPath: undefined`）、也没有任何脱敏实现；②`evidence.retainMax` 只有配置项，`./.price-agent/evidence/` 从不清（实测已堆到 46MB）；③抓价无任何重试，adb 偶发掉线/`uiautomator dump` 拿不到 idle 就让整次比价失败。
+- **做了什么**：
+  1. **零依赖截图脱敏**（新增 `src/device/redact.ts`）：只用 `node:zlib` 手写 PNG 解码/编码（8-bit、非隔行，支持灰度/RGB/RGBA + 5 种 filter），从 dump XML 里识别**手机号/门牌地址/收件人/支付信息**节点并取其 bounds，把截图中对应矩形**填黑**。**隐私优先**：无法解码或未定位到敏感区域 → `applied=false`，调用方**不保存原图**。真机实测 1600×2560 截图 ~130–190ms/张。
+     - 真机校准：初版把「11人觉得味道赞」误判成地址（因含“道”），已收窄路名规则（`大道|街道|路|街|巷|弄`+数字，去掉单字“道/号”泛匹配），并加回归用例。
+  2. **证据真实绑定**（`src/task/runner.ts` `bindEvidence`）：每平台抽取后把 **dump 原样原子写** `evidence/<quoteId>.xml`（600 权限）、**截图脱敏后**写 `evidence/<quoteId>.png`；OCR 平台（饿了么 canvas）把 OCR 文本写 `rawExtraction.ocrText`；`redaction` 如实标 `applied/none`，失败/未脱敏写 `missingReason`（交 `price` 层降级，绝不假装有证据）。`draftFromFacts` 增 `bound` 参数承接（旧调用不传则保持“无路径”原行为，测试零改动）。
+  3. **平台补截图**：`runMeituanReal` 各结算页返回点 `withShot()`（截图尽力而为，失败不影响读价）；`runElemeReal` 的 OCR 分支保留结算页截图；`RawQuoteFacts.screenshot` 字段终于被填。
+  4. **TTL + 保留上限清理**（新增 `src/task/cleanup.ts`，`cleanupSweep` 接入 `lifecycle`）：`evidence/` 与 `results/` 按「`retainDays` 天**或** `retainMax` 组，**取先到者**」清理；在**任务完成**与**插件启动**两个时点触发（`src/index.ts`），尽力而为不阻塞。`getResult` 时若报价声明的截图已被清理，`note` 如实提示“截图证据已清理，需重新核价”（`evidenceDowngradeNote`）。
+  5. **瞬时异常重试**（新增 `src/core/retry.ts`）：`isRetryable` 只认 **adb 掉线/dump idle 失败/截屏失败/超时** 这类瞬时故障；`NeedsHumanError`（验证码/登录/风控）与 `ForbiddenActionError`（下单/支付）**永远不重试**（红线优先，即便文案带 timeout 也不重试）。`runCompare` 用 `withRetry` 包裹平台抽取（`task.retryAttempts`，默认 2），重试写进度行，尊重 `signal` 取消。
+  6. **配置**（`src/config.ts` + `cordis.patch.yml`）：`task.retryAttempts=2`、`evidence.retainDays=7`、`evidence.redact=true`（默认开）。
+- **验证方式**：
+  - **真机截图脱敏实证**（只读，未点提交/支付）：对既有真机截图 `mt-s6.png`+`mt-s6.xml` 跑 `redactScreenshot` → `applied=true, masked=2`，放大对照图确认「益丰新村-9号楼」被**整块涂黑**；`1600×2560` 输出仍是合法 PNG。
+  - **离线**：`pnpm check` **148/148 全绿**；新增 `test/redact.test.ts`（9）、`test/retry.test.ts`（7）、`test/p5.test.ts`（6）；`test:coverage` `src/price` 行覆盖 **97.15%**（策略/证据 100%）。
+  - 覆盖：PNG 编解码 round-trip、掩码、无法脱敏不落图、清理（按天/按量/目录不存在）、重试（瞬时重试成功/验证码不重试/超限抛错/取消即停）、证据绑定（dump+脱敏图/未脱敏不存/OCR 文本）。
+- **红线/隐私**：全程只读；脱敏失败**绝不保存原图**；截图仅落 `.price-agent/`（gitignore），入 git 只有脱敏 fixture；真机对照图验证完即删。
+- **边界**：脱敏是「按 dump 文本定位矩形填黑」，非像素级人脸/水印识别；dump 读不到的 canvas 区域（如饿了么自绘）若含 PII 无法据此定位——此时会因“无敏感区域”而不落图（隐私安全默认方向）。
+- **更新后状态**：**P5「隐私脱敏 / 证据清理 / 异常重试 / 验证码暂停」四项均有可判定落点**，`pnpm check` 全绿。
+
+---
+
 ---
 
 ## 追加条目的模板（供后续每轮使用）
@@ -480,4 +501,4 @@
 
 ---
 
-*最后更新：2026-10-24 16:46 +08:00*
+*最后更新：2026-10-24 18:15 +08:00*

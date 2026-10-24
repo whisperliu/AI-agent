@@ -625,6 +625,8 @@ async function tryReadSettle(
   const png = await nav.screencap()
   const result = await ctx.ocr.read(png, roi)
   const byOcr = extractElemeSettleFromOcr(result.words, cond, result.text)
+  // 保留这张结算页截图作为证据（canvas 自绘没有控件树）；脱敏在 task 层统一处理。
+  byOcr.screenshot = png
   return byOcr
 }
 

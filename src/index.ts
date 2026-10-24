@@ -12,7 +12,7 @@ import { Config } from './config.ts'
 import { buildCapabilities, TaskDomainSpec } from './core/container.ts'
 import type { JobsPort } from './core/container.ts'
 import { createJobsPort } from './core/jobs-adapter.ts'
-import { recoverOnStartup } from './task/lifecycle.ts'
+import { cleanupSweep, recoverOnStartup } from './task/lifecycle.ts'
 import { priceAgentTool } from './tools/price-agent.ts'
 
 export const name = 'price-agent'
@@ -35,6 +35,8 @@ export async function apply(ctx: Context, config: AppConfig): Promise<void> {
 
   const deps = { ...caps, jobs, tasks: domain, config }
   await recoverOnStartup(deps)
+  // 启动即清理过期证据/结果（§6.5 最少留存；尽力而为，不阻塞插件加载）。
+  await cleanupSweep(deps)
 
   ctx.tools.register(priceAgentTool(deps))
 }
