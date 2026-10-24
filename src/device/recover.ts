@@ -63,6 +63,15 @@ function looksLikeTextlessCaptcha(nodes: UiNode[], texts: string[]): boolean {
 const UPGRADE_HINTS = ['立即更新', '以后再说', '版本升级', '新版本', '稍后再说']
 const AD_HINTS = ['跳过', '跳过广告', '广告']
 const PERMISSION_HINTS = ['是否允许', '允许', '定位', '位置信息']
+/** 系统权限弹窗（对话框）特征：真机"引导条"会含"定位"，但那是页面元素而非遮挡，不能当 permission。 */
+const PERMISSION_DIALOG_HINTS = [
+  '是否允许',
+  '允许',
+  '拒绝',
+  '仅在使用中允许',
+  '仅本次允许',
+  '始终允许',
+]
 const NOTIFICATION_HINTS = ['允许通知', '通知权限']
 const LOADING_HINTS = ['加载中', '请稍候', 'loading']
 
@@ -109,8 +118,12 @@ export function classifyObstruction(dump: string): Obstruction {
 
   const noti = anyHit(texts, NOTIFICATION_HINTS)
   if (noti) return { kind: 'notification', matched: noti }
+  // 权限：必须是"系统权限对话框"（含允许/拒绝按钮），而不是页面内"开启定位服务"引导条。
+  const permDialog = anyHit(texts, PERMISSION_DIALOG_HINTS)
+  if (permDialog) return { kind: 'permission', matched: permDialog }
   const perm = anyHit(texts, PERMISSION_HINTS)
-  if (perm) return { kind: 'permission', matched: perm }
+  // 只有极简界面（全部文本都很短/很少）时才把"定位"当权限拦截；否则视为页面内容。
+  if (perm && texts.length <= 3) return { kind: 'permission', matched: perm }
 
   return { kind: 'none' }
 }

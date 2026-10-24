@@ -228,6 +228,39 @@ function fakeAdbRunner(state: FakeAdbState): AdbRunner {
   }
 }
 
+test('adb driver: falls back to --compressed dump when standard dump is empty (real heavy page)', async () => {
+  // 模拟：标准 dump 与 /dev/tty 均为空，只有 --compressed 产物有效（美团搜索结果页实测）。
+  const state: FakeAdbState = {
+    devices: [{ serial: '192.168.1.8:5555', state: 'device' }],
+    calls: [],
+    dumpXml: settleXml,
+  }
+  const runner: AdbRunner = async (argv) => {
+    state.calls.push(argv)
+    let a = argv.slice()
+    if (a[0] === '-s') a = a.slice(2)
+    const head = a[0]
+    if (head === 'devices')
+      return { code: 0, stdout: 'List of devices attached\n192.168.1.8:5555\tdevice\n', stderr: '' }
+    if (head === 'exec-out' && a[1] === 'uiautomator')
+      return { code: 0, stdout: 'Killed\n', stderr: '' }
+    if (head === 'shell' && a[1] === 'uiautomator') return { code: 0, stdout: 'dumped', stderr: '' }
+    if (head === 'exec-out' && a[1] === 'cat') {
+      // 标准落盘为空；--compressed 落盘有效
+      const target = a[2] ?? ''
+      return { code: 0, stdout: target.includes('_c.xml') ? settleXml : '', stderr: '' }
+    }
+    return { code: 0, stdout: '', stderr: '' }
+  }
+  const d = createAdbDriver({ serial: '192.168.1.8:5555', runner })
+  const xml = await d.dump()
+  assert.ok(xml.includes('<hierarchy'))
+  assert.ok(
+    state.calls.some((c) => c.includes('--compressed')),
+    'should attempt --compressed fallback',
+  )
+})
+
 test('adb driver: auto selects unique device then dumps', async () => {
   const state: FakeAdbState = {
     devices: [{ serial: '192.168.1.8:5555', state: 'device' }],

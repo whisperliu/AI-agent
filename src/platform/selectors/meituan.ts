@@ -31,9 +31,11 @@ export interface MeituanSelectors {
 }
 
 export const MEITUAN_SELECTORS: MeituanSelectors = {
-  homeAnchors: ['tab_home', 'search_entry', 'homepage_search', 'index_search'],
-  searchInput: ['search_edit', 'search_input', 'search_view', 'search_entry', 'edit_text'],
-  searchSubmit: ['search_btn', 'search_confirm', 'tv_search', 'btn_search'],
+  // 真机实测（TB321FU, 美团 2026-10）：首页搜索区为 search_layout_area / search_button。
+  homeAnchors: ['search_layout_area', 'search_button', 'tab_home', 'homepage_search'],
+  // 搜索页真机 id：search_edit_text(EditText) + search_button(TextView)。
+  searchInput: ['search_edit_text', 'search_layout_area', 'search_edit', 'search_input'],
+  searchSubmit: ['search_button', 'search_btn', 'search_confirm', 'tv_search'],
   storeRow: ['poi_name', 'shop_name', 'store_name', 'poi_title'],
   addToCart: ['add_to_cart', 'add_cart', 'add_btn', 'tv_add', 'btn_add'],
   viewCart: ['cart_bar', 'go_cart', 'cart_icon', 'shopping_cart'],

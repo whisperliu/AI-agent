@@ -46,7 +46,8 @@ interface PlatformStrategy {
 - **纯提取可离线测**：`extractMeituanSettle(nodes, cond, dump)` 不碰设备，按 `resource-id`（`fee_<kind>` / `discount_<kind>` / `payable`）优先、文案兜底（`配送费 ¥2.00`、`满30减5 -¥5.00`）。金额解析优先取 `¥` 前缀，避免"满30减5"误取 30。
 - **真机流程**：首页→搜索→选店→加购→购物车/去结算→**读实付**；每步 `waitAny(anchors)` 复用 `device/steps.waitForAnyState`（验证码/登录即停 + 弹窗恢复 + 超时取证）。**全程只读，绝不点提交订单/支付**（`driver.tap` 内 `assertTapSafe` 兜底）。
 - **OCR 质量门**：真机读不到实付 → `confidence='low'` → `price` 层 `needsConfirm=true`（不硬凑算术）。
-- **⚠️ 选择器待真机校准**：`MEITUAN_SELECTORS` 为候选集合（短名后缀匹配），真机首跑按 `.price-agent/evidence/*.xml` 回填即可，不动业务逻辑。
+- **真机实测（TB321FU / 美团 2026-10）已校准部分**：首页搜索区 `search_layout_area`/`search_button`；搜索页输入框 `search_edit_text`、`search_button`。搜索结果首条即"香叶·烧鸭下饭菜(天骄店)"。
+- **⚠️ 尚未走通的真机阻碍**：（1）店铺页菜单区依赖**收货地址**，无地址时菜单空转"袋鼠加载中"、`uiautomator` 报 `could not get idle state`；地址属用户个人信息，需**用户本人**设置。（2）搜索结果/店铺页大量控件为混淆短 id（`h5x/myj/vqq`），需按真机 dump 逐一登记；结账/购物车控件待菜单可加载后再校准。（3）中文搜索输入需 ADBKeyboard（见 40-device）。
 
 ## 测试
 - `test/fixtures` 回放：用 `MockDriver` 跑"首页→搜索→结算"脚本，断言每步 anchor 命中。

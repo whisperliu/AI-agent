@@ -166,16 +166,25 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
 
   async function dump(signal?: AbortSignal): Promise<string> {
     await ensureConnected(signal)
+    // 1) 直出到 /dev/tty（低开销，多数页面可用）。
     const r = await adb(['exec-out', 'uiautomator', 'dump', '/dev/tty'], signal)
     if (r.code === 0 && r.stdout.includes('<hierarchy')) return r.stdout
+
+    // 2) 落盘标准 dump 再 cat。
     const remote = '/sdcard/window_dump.xml'
     const d = await adb(['shell', 'uiautomator', 'dump', remote], signal)
-    if (d.code !== 0) throw new Error(`uiautomator dump 失败：${(d.stderr || r.stderr).trim()}`)
     const c = await adb(['exec-out', 'cat', remote], signal)
-    if (!c.stdout.includes('<hierarchy')) {
-      throw new Error('uiautomator dump 输出不含 hierarchy（可能被系统限制）')
-    }
-    return c.stdout
+    if (c.stdout.includes('<hierarchy')) return c.stdout
+
+    // 3) 兜底 --compressed：真机重页面（如美团搜索结果）标准 dump 进程会被系统 Killed，
+    //    落盘 0 字节；--compressed 体积更小、可稳定产出（属性保留 resource-id/text/bounds/clickable）。
+    const remoteC = '/sdcard/window_dump_c.xml'
+    const dc = await adb(['shell', 'uiautomator', 'dump', '--compressed', remoteC], signal)
+    const cc = await adb(['exec-out', 'cat', remoteC], signal)
+    if (cc.stdout.includes('<hierarchy')) return cc.stdout
+
+    const err = (dc.stderr || d.stderr || r.stderr || '').trim()
+    throw new Error(`uiautomator dump 输出不含 hierarchy（可能被系统限制）：${err}`)
   }
 
   async function tap(sel: UiSelector, signal?: AbortSignal): Promise<void> {
