@@ -315,6 +315,21 @@
 - **验证方式**：`pnpm check` 82/82 绿；仅文档变更。
 - **更新后状态**：本次会话收尾；HEAD `e34301c`；下一步 P3。
 
+### [26] 2026-10-24 13:35 · P2 真机 §8.4 最小实验 PASS（Lenovo TB321FU 无线调试）
+- **为什么**：用户接入安卓平板要求做真机测试；此前 P2 的"真机 PASS"一直挂在"用户本机连机"上。
+- **做了什么**：
+  1. **连接方式定为无线调试**：USB 直连不可行——实测数据线仅充电（Windows `usbipd list`/PnP 全程无 Android/MTP 设备列举），且 WSL 侧 `sudo` 被 `no new privileges` 锁死、`modprobe vhci-hcd` 返回 `Operation not permitted`、无 `usbip` 客户端，usbip 路径走不通。改走无线调试：pad 与电脑 WLAN 同网段 `192.168.3.x`（WSL 镜像网络自动获得 `192.168.3.45/24`）。
+  2. **配对与连接**：`adb pair 192.168.3.44:42261 223029` 成功（guid=`adb-HA26JA4H-Qwlhvj`）；`adb connect 192.168.3.44:44881` → `device`。
+  3. **密钥归属修正（关键）**：dsh 进程以 `HOME=/home/liuqiaoqiao` 运行，而配对密钥原本落在 `.home/andhome/.android/`。已将 `adbkey/adbkey.pub/adb_known_hosts.pb` 同步到 `/home/liuqiaoqiao/.android`（`chmod 600`），使插件用默认 HOME 启动 adb 即可免授权连接。
+  4. **配置切真机**：`~/.dsh/profiles/web/cordis.patch.yml`（运行时实际加载）的 `device` 段由 `driver: mock / serial: auto` 改为 `driver: adb / serial: 192.168.3.44:44881 / adbPath: <repo>/.home/android-sdk/platform-tools/adb / autoReconnect: true`（profile 原文件已备份）。**仓库内 `cordis.patch.yml` 保持模板默认（`mock/auto/adb`）不入网段/IP 等本机信息**；真机配置只存在于运行时 profile（不入 git）。
+- **验证方式（实跑真机）**：
+  - 设备：**Lenovo TB321FU**，Android **16**，1600×2560 @ 400dpi，adb 37.0.1；
+  - `uiautomator dump` 非空且含文本/resource-id 节点；`screencap` 得有效 PNG（`8950 4e47` 魔数，1600×2560）；
+  - 插件真实代码路径 `createAdbDriver().ensureConnected() → probe()` 返回 `canDump=true, canScreenshot=true, recommend=tree`；
+  - 重启 `dsh web` 后工具 `price_agent({action:'probe'})` 返回真机报告（TB321FU / Android 16 / 1600x2560 @ 400dpi），确认已脱离 Mock 驱动。
+- **未做/边界**：端口非固定——pad 重启或重开无线调试后 `44881` 会变，需同步更新 `device.serial`；插件对 `host:port` 已有 `ensureConnected` 自动 `adb connect` 重连一次（§8.3）；锁屏/休眠可能掉线。全程只读，未做任何点击/下单/支付。
+- **更新后状态**：**P2 §8.4 真机 PASS**；`device.driver=adb` 已在 GUI 生效；下一步 P3 单平台抓价（需按真机 dump 校准页面契约）。
+
 ---
 
 ## 追加条目的模板（供后续每轮使用）
@@ -330,4 +345,4 @@
 
 ---
 
-*最后更新：2026-10-22 15:08 +08:00*
+*最后更新：2026-10-24 13:35 +08:00*

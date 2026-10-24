@@ -14,9 +14,9 @@
 | 模型 | `workbuddy2api/deepseek-v4.1-flash`（经 `dsh-magpie-connect`, baseUrl `127.0.0.1:3425`） |
 | GUI | `http://127.0.0.1:3080`（profile `web`） |
 | 工作目录 | `/home/liuqiaoqiao/dsh-plugin-price-agent` |
-| 时间跨度 | 2026-10-22 08:14 → 15:08（含跨会话空档） |
+| 时间跨度 | 2026-10-22 08:14 → 2026-10-24 13:35（含跨会话空档） |
 | 起始基线 | P0 已提交（`43d6ea0`），P1 未开始 |
-| 结束状态 | **P1 收工 + P2 真机通道代码完成并提交**；真机 §8.4 PASS 待用户本机连手机判定（**会话收尾 15:08**） |
+| 结束状态 | **P1 收工 + P2 真机通道代码完成 + 真机 §8.4 最小实验 PASS（Lenovo TB321FU 无线调试）** |
 | 期间提交 | `970d2fb`（P1）、`d43ac0d`（P1 收尾快照）、`251c4e6`（安全修复）、`e34301c`（P2 真机通道，已提交） |
 
 ---
@@ -39,6 +39,7 @@
 | 12 | 13:11 | 「收尾，P1收工。」 | 按约定做**最终快照追加**并提交 | 本文件最终版 | 门禁绿 | ✅ |
 | 13 | 13:12 | 「下一步P2真机」 | 读 P2 文档/device 代码；装 adb 到工作区；实现 adb 真机驱动/连接重连/能力探测/弹窗恢复/截图留证/步骤原语；新增 `probe`/`selfCheck` 工具动作与 §8.4/演练脚本；**修 `assertTapSafe` 漏检 `text` 的红线漏洞**；补离线测试与文档 | device/{adb,uixml,probe,recover,pageDetect,steps,capture}、tools/task 扩展、2 脚本、device-p2 测试 | `pnpm check` 82/82；coverage 95.51%；无真机可读报错 | ✅（真机 PASS 待用户连机） |
 | 14 | 15:08 | 「收尾」 | 按约定做**最终快照**：时间跨度→15:08、结束状态、期间提交（P2 已提交）、追加本轮、JSON/页脚 | 本文件最终版 | `pnpm check` 82/82 绿 | ✅ |
+| 15 | 10-24 13:35 | 「测试真机」→最终「走无线」+「补进去，已重启 dsh web」 | 排查 USB（仅充电线/无枚举/无 root 装 usbip）→ 改无线调试：`adb pair`+`adb connect`；同步 adb 密钥到 `HOME=/home/liuqiaoqiao/.android`；配置 mock→adb；重启后 `probe` 回真机 | TB321FU 真机连通 + §8.4 判定 + CHANGELOG/docs 更新 | 真机 dump/截屏/`probe` 全通过 | ✅ |
 
 > 说明：上述"人类可见轮次"已把会话中穿插的**系统时间采样提醒 / job 完成通知 / 工具被打断后重试**等非人类消息折叠掉，只保留实际的人类请求与对应的实质产出。
 
@@ -111,6 +112,18 @@
 - **处理**：按约定做**最终快照**——更新时间跨度(→15:08)/结束状态、更正"期间提交"（P2 已提交）、追加本轮、更新 JSON 与页脚，并提交。
 - **结论**：本次会话收尾；**P0 / P1 / P2(代码) 全部已提交**（HEAD `e34301c`）；P2 真机 §8.4 PASS 待用户本机连机；下一步 P3。
 
+### 轮次 15 · 真机测试（2026-10-24，USB→无线）
+- **意图**：用户接入安卓平板，要求做真机测试（先试 USB 直连，最后走无线）。
+- **排查过程**：
+  - **USB 直连失败**：Windows `usbipd list`/PnP 全程无 Android/MTP 设备 → 数据线仅充电（物理层没通）；另 WSL 内 `sudo` 被 `no new privileges` 锁死、`modprobe vhci-hcd` → `Operation not permitted`、无 `usbip` 客户端，即便装 `usbipd-win`（已成功装 5.3.0）也 attach 不进 WSL。
+  - **网络前置**：pad 在 `192.168.3.44`（WiFi），电脑原只有有线 `192.168.71.x`，不同网段不通；用户把电脑 WLAN 连到同一 WiFi 后，WSL 镜像网络自动得到 `192.168.3.45/24`，ping 通。
+- **做了什么**：
+  - `adb pair 192.168.3.44:42261 223029` 成功（guid=`adb-HA26JA4H-Qwlhvj`）；`adb connect 192.168.3.44:44881` → `device`。
+  - **密钥归属修正**：dsh 进程 `HOME=/home/liuqiaoqiao`，配对密钥原在 `.home/andhome/.android/`；已同步 `adbkey/adbkey.pub/adb_known_hosts.pb` 到 `/home/liuqiaoqiao/.android`（`chmod 600`），使插件默认 HOME 启动 adb 即免授权。
+  - **配置切真机**：`~/.dsh/profiles/web/cordis.patch.yml`（运行时实际加载）的 `device` → `driver: adb / serial: 192.168.3.44:44881 / adbPath: <repo>/.home/android-sdk/platform-tools/adb / autoReconnect: true`（profile 已备份）。仓库内 `cordis.patch.yml` 保持模板默认 `mock/auto/adb`（不把本机 IP/网段写进 git）。用户重启 `dsh web`。
+- **验证（实跑真机）**：Lenovo **TB321FU** / Android **16** / 1600×2560 @ 400dpi / adb 37.0.1；`uiautomator dump` 非空且有文本/resource-id；`screencap` 有效 PNG；插件真实代码 `ensureConnected→probe()` = `canDump/canScreenshot=true, recommend=tree`；重启后工具 `price_agent({action:'probe'})` 返回 TB321FU 真机报告（脱离 Mock）。
+- **边界**：无线端口 `44881` 非固定，pad 重启/重开无线调试会变（需更新 `serial`）；锁屏休眠可能掉线（插件自动 `adb connect` 重连 1 次）。全程只读，未点击/下单/支付。
+
 ### 轮次 10 · 记录对话
 - **产物**：本文件。
 
@@ -162,7 +175,7 @@
     "cwd": "/home/liuqiaoqiao/dsh-plugin-price-agent",
     "tz": "Asia/Shanghai",
     "start": "2026-10-22T08:14:19+08:00",
-    "end": "2026-10-22T15:08:00+08:00",
+    "end": "2026-10-24T13:35:00+08:00",
     "baseline_commit": "43d6ea0",
     "final_commit": "d43ac0d (P1); P2 未提交"
   },
@@ -180,22 +193,25 @@
     {"n":11,"at":"13:08","user":"当前会话结束时追加这份文件","intent":"append-at-session-end","result":"策略更正为收尾时追加","verify":"-","status":"ok"},
     {"n":12,"at":"13:11","user":"收尾，P1收工。","intent":"final-snapshot","result":"最终快照并提交","verify":"gate green","status":"ok"},
     {"n":13,"at":"13:12","user":"下一步P2真机","intent":"build P2 real-device channel","result":"adb 驱动/连接重连/能力探测/弹窗恢复/截图留证/probe+selfCheck/演练脚本 + 修 assertTapSafe 漏检 text","verify":"pnpm check 82/82; coverage 95.51%; 无设备可读报错","status":"ok(真机PASS待用户连机)"},
-    {"n":14,"at":"15:08","user":"收尾","intent":"final-snapshot","result":"时间跨度/结束状态/期间提交更正 + 追加本轮 + JSON/页脚","verify":"pnpm check 82/82","status":"ok"}
+    {"n":14,"at":"15:08","user":"收尾","intent":"final-snapshot","result":"时间跨度/结束状态/期间提交更正 + 追加本轮 + JSON/页脚","verify":"pnpm check 82/82","status":"ok"},
+    {"n":15,"at":"10-24 13:35","user":"测试真机 → 走无线 → 补文档(已重启)","intent":"real-device test","result":"USB 不通(仅充电线/无 root 装 usbip) → 无线调试 pair+connect；密钥同步到 HOME；配置 mock→adb；重启后 probe 回真机 TB321FU","verify":"真机 dump/截屏/probe 全通过；GUI probe 返回 TB321FU","status":"ok(真机 §8.4 PASS)"}
+  ],
   "fixes": [
     {"topic":"job owner","file":"src/core/jobs-adapter.ts","detail":"owner=exec.agent.id 贯通"},
     {"topic":"idempotency stuck","file":"src/task/lifecycle.ts","detail":"jobs.start 失败回滚+force 重跑"},
     {"topic":"readonly sandbox","file":"scripts/*","detail":"--patch 叠加 / install 脚本"},
     {"topic":"safety text gap","file":"src/core/safety.ts","detail":"assertTapSafe 补检 text（P2 发现）"},
-    {"topic":"adb binary screencap","file":"src/device/adb.ts","detail":"screencap 走 pull 文件而非 utf8"}
+    {"topic":"adb binary screencap","file":"src/device/adb.ts","detail":"screencap 走 pull 文件而非 utf8"},
+    {"topic":"adb key home","file":"/home/liuqiaoqiao/.android","detail":"配对密钥同步到 dsh 进程 HOME，避免 unauthorized"}
   ],
   "deliverables": [
     "src/**","test/**","scripts/web-plugin.patch.yml","scripts/install-into-web-profile.sh",
     "scripts/device-min-experiment.sh","scripts/device-rehearsal.mjs",
-    "docs/conversation-log.md","CHANGELOG.md[19]-[24]"
+    "docs/conversation-log.md","CHANGELOG.md[19]-[26]"
   ]
 }
 ```
 
 ---
 
-*会话收尾快照：2026-10-22 15:08 · P0/P1/P2(代码) 全部已提交（HEAD `e34301c`）；P2 真机 §8.4 PASS 待用户本机连机；下一步 P3。*
+*会话快照：2026-10-24 13:35 · P0/P1/P2(代码) 全部已提交（HEAD `e34301c`）；**P2 真机 §8.4 最小实验 PASS（Lenovo TB321FU 无线调试 `192.168.3.44:44881`）**；下一步 P3。*
