@@ -478,7 +478,7 @@
   6. **配置**（`src/config.ts` + `cordis.patch.yml`）：`task.retryAttempts=2`、`evidence.retainDays=7`、`evidence.redact=true`（默认开）。
 - **验证方式**：
   - **真机截图脱敏实证**（只读，未点提交/支付）：对既有真机截图 `mt-s6.png`+`mt-s6.xml` 跑 `redactScreenshot` → `applied=true, masked=2`，放大对照图确认「益丰新村-9号楼」被**整块涂黑**；`1600×2560` 输出仍是合法 PNG。
-  - **离线**：`pnpm check` **152/152 全绿**；新增 `test/redact.test.ts`（9）、`test/retry.test.ts`（7）、`test/p5.test.ts`（7）；`test:coverage` `src/price` 行覆盖 **97.15%**（策略/证据 100%）。
+  - **离线**：`pnpm check` **149/149 全绿**；新增 `test/redact.test.ts`（9）、`test/retry.test.ts`（7）、`test/p5.test.ts`（6）；`test:coverage` `src/price` 行覆盖 **97.15%**（策略/证据 100%）。
   - 覆盖：PNG 编解码 round-trip、掩码、无法脱敏不落图、清理（按天/按量/目录不存在）、重试（瞬时重试成功/验证码不重试/超限抛错/取消即停）、证据绑定（dump+脱敏图/未脱敏不存/OCR 文本）。
 - **红线/隐私**：全程只读；脱敏失败**绝不保存原图**；截图仅落 `.price-agent/`（gitignore），入 git 只有脱敏 fixture；真机对照图验证完即删。
 - **边界**：脱敏是「按 dump 文本定位矩形填黑」，非像素级人脸/水印识别；dump 读不到的 canvas 区域（如饿了么自绘）若含 PII 无法据此定位——此时会因“无敏感区域”而不落图（隐私安全默认方向）。
@@ -500,6 +500,21 @@
 
 ---
 
+### [39] 2026-10-24 18:55 · P5 打磨（三）：无线调试 mDNS 自动发现/回连（修「旧 host:port 失效」真机掉线）
+
+- **为什么**：真机复跑时反复出现「未检测到在线设备」——配置里写的是旧的 `192.168.3.44:44881`，手机重启后端口已变为 `:37289`；而 mDNS 通道（`adb-XXXX._adb-tls-connect._tcp`）其实一直在线。原 `ensureConnected` 只会对**配置值**做一次 `adb connect`，配置过期即彻底连不上，需人工重配。
+- **做了什么**（`src/device/adb.ts`）：
+  1. **学习 mDNS 串号**：`listDevices` 后若发现 `._adb-tls-connect._tcp` 的在线设备，记住作为重连候选（不改配置）。
+  2. **主动发现当前端口**：新增 `discoverMdnsAddress()`，解析 `adb mdns services` 得 `host:port`；旧 `host:port` 连接失败时依次尝试 ①配置值 ②mDNS 串号 ③**主动发现的当前端口**，任一成功即采用并继续。
+  3. 重连成功后再关闭动画（与正常连接一致）。
+- **验证方式**：
+  - **真机实证**：旧 `192.168.3.44:44881` 下 `ensureConnected()` → **自动切到 `adb-HA26JA4H-..._adb-tls-connect._tcp`**，`probe` 读到 `TB321FU / Android 16 / canScreenshot=true`；随后 `captureEvidence` 落盘 dump + **脱敏截图**（1600×2560 合法 PNG）。
+  - 离线：`test/device-p2.test.ts` 新增 2 例（mDNS 串号回退、`adb mdns services` 当前端口发现），**该文件 28 tests 全绿**；`pnpm check` 全绿。
+- **备注**：本机 adb 需先 `adb start-server` + `adb mdns check` 才会在 `adb devices` 中出现无线设备（daemon 冷启动时 mDNS 发现延迟）；这是环境侧动作，未写进驱动强制流程，仅在重连时兜底。
+- **更新后状态**：无线调试掉线不再依赖人工重配端口；P5 的「异常重试/稳健性」闭环。
+
+---
+
 ---
 
 ## 追加条目的模板（供后续每轮使用）
@@ -515,4 +530,4 @@
 
 ---
 
-*最后更新：2026-10-24 18:45 +08:00*
+*最后更新：2026-10-24 18:55 +08:00*

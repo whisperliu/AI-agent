@@ -588,3 +588,60 @@ test('probeDevice / runMinExperiment with adb driver (fake runner)', async () =>
     await rm(tmp, { recursive: true, force: true })
   }
 })
+
+test('adb driver: falls back to learned mDNS serial when configured host:port is dead (P5)', async () => {
+  // 配置的旧 host:port 已失效，但 mDNS 实例名在线（真机手机重启后端口变化的真实情形）。
+  const calls: string[][] = []
+  const mdns = 'adb-HA26JA4H-Qwlhvj._adb-tls-connect._tcp'
+  const runner: AdbRunner = async (argv) => {
+    calls.push(argv)
+    const a = argv[0] === '-s' ? argv.slice(2) : argv
+    if (a[0] === 'devices') {
+      // 第一次：旧 host:port 不在；mDNS 通道在线
+      return {
+        code: 0,
+        stdout: `List of devices attached\n${mdns}\tdevice\n`,
+        stderr: '',
+      }
+    }
+    if (a[0] === 'connect') {
+      return { code: 0, stdout: '', stderr: 'failed to connect: Connection refused' }
+    }
+    return { code: 0, stdout: '', stderr: '' }
+  }
+  const d = createAdbDriver({ serial: '192.168.3.44:44881', runner })
+  await d.ensureConnected()
+  // 应改用 mDNS 串号（并在后续命令带 -s 该串号）
+  assert.equal(d.serial, mdns)
+})
+
+test('adb driver: discovers current mDNS port when configured host:port is dead (P5)', async () => {
+  const calls: string[][] = []
+  let connected = ''
+  const runner: AdbRunner = async (argv) => {
+    calls.push(argv)
+    const a = argv[0] === '-s' ? argv.slice(2) : argv
+    if (a[0] === 'devices') {
+      const body = connected
+        ? `List of devices attached\n${connected}\tdevice\n`
+        : 'List of devices attached\n'
+      return { code: 0, stdout: body, stderr: '' }
+    }
+    if (a[0] === 'mdns' && a[1] === 'services') {
+      return {
+        code: 0,
+        stdout:
+          'List of discovered mdns services\nadb-XYZ\t_adb-tls-connect._tcp\t192.168.3.44:37289\n',
+        stderr: '',
+      }
+    }
+    if (a[0] === 'connect') {
+      connected = a[1] === '192.168.3.44:37289' ? a[1]! : ''
+      return { code: 0, stdout: connected ? 'connected' : '', stderr: connected ? '' : 'refused' }
+    }
+    return { code: 0, stdout: '', stderr: '' }
+  }
+  const d = createAdbDriver({ serial: '192.168.3.44:44881', runner })
+  await d.ensureConnected()
+  assert.equal(d.serial, '192.168.3.44:37289')
+})

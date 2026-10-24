@@ -212,7 +212,7 @@
   2. `runner.bindEvidence`（dump 原样 + 截图脱敏后落盘，OCR 写 ocrText，如实标 redaction/missingReason）+ `withRetry` 包平台抽取；`meituanReal.withShot` / `elemeReal` OCR 分支补截图。
   3. `lifecycle.cleanupSweep` + `evidenceDowngradeNote`；`index` 启动清理；`config`/`cordis.patch.yml` 增 `retryAttempts/retainDays/redact`。
 - **真机实证（只读）**：对既有真机截图 `mt-s6.png`+`mt-s6.xml` → `applied=true masked=2`，放大对照图确认「益丰新村-9号楼」被整块涂黑；1600×2560 ~150ms/张。误伤校准：初版把「11人觉得味道赞」判成地址（含“道”），已收窄路名规则并加回归。
-- **验证**：`pnpm check` **152/152 全绿**；新增 `test/{redact,retry,p5}.test.ts`（9+7+7）；`src/price` 行覆盖 97.15%。
+- **验证**：`pnpm check` **149/149 全绿**；新增 `test/{redact,retry,p5}.test.ts`（9+7+7）；`src/price` 行覆盖 97.15%。
 - **边界**：脱敏按 dump 文本定位矩形填黑（非像素级），dump 读不到的 canvas 区无法定位 → 不落图（安全默认）。
 - **结论**：P5 四条（隐私脱敏 / 证据清理 / 异常重试 / 验证码暂停）均有可判定落点。
 
@@ -223,6 +223,14 @@
 - **验证**：`pnpm check` **152/152 全绿**；`test/p5.test.ts` +3 例（ocrBoxes / 无证据兜底 / captureEvidence 默认脱敏不存图）；`device-p2` 断言超时用例改 `evidenceRedact:false`。
 - **真机**：本轮真机掉线（端口变更、mDNS 重连后又离线），未现场复跑 capture；脱敏算法上一轮已用真机 `mt-s6` 验证（masked=2 涂黑）。
 - **结论**：P5「截图默认脱敏」覆盖成功证据 + 失败取证两条路径，OCR 证据可复核。
+
+
+### 轮次 25 · P5 打磨（三）· 无线调试 mDNS 自动发现/回连（2026-10-24 18:55）✅
+- **背景**：真机复跑时反复"未检测到在线设备"，根因是配置里旧 `host:port`（:44881）与手机重启后的实际端口（:37289）不一致；mDNS 通道其实在线。
+- **做了什么**：`device/adb.ts` 重连候选改为 ①配置 host:port ②学到的 mDNS 串号 ③`adb mdns services` 主动发现当前端口；成功后沿用并关动画。
+- **真机实证**：旧 host:port → 自动切到 `adb-..._adb-tls-connect._tcp`；probe TB321FU/Android16/canScreenshot；`captureEvidence` 落 dump+脱敏截图（1600×2560 合法 PNG）。
+- **验证**：`device-p2` +2 例（28 tests 全绿）；`pnpm check` 全绿。
+- **备注**：本机 adb 冷启动需 `adb start-server`+`adb mdns check` 才出现无线设备（环境侧）。
 
 
 ---
@@ -266,8 +274,9 @@
     {"n":20,"at":"10-24 16:10","user":"下一步进行P4","intent":"P4 多平台+策略+等价分组","result":"config 增 platforms.strategies;新增 price/strategies.ts(四态+谨慎互斥);Quote 带 snapshotId/hash 且 compare 强制同快照(偏离归不可比组);新增 platform/elemeReal+selectors/eleme;抽 settleRows/navigator 共享原语;runner 集成策略 savings 与互斥","verify":"pnpm check 122/122 全绿; src/price 行覆盖 97.15%(strategies 100%); 16 P4 tests + eleme 脱敏 fixture; 饿了么真机遇实名/短信验证→红线即停零点击","status":"ok(P4 完成)"},
     {"n":21,"at":"10-24 16:46","user":"手机上饿了么已经登录，重新测试","intent":"饿了么真机复测","result":"无线调试端口变更→用 ~/.android 旧key重连成功;实测饿了么整App为canvas/TMS自绘(dump仅水印节点,结算页无文本);落地真实 OCR(tesseract)+elemeReal.extractElemeSettleFromOcr+settlePanelRoi(右栏tms_fragment_container裁剪);真机读到 payable=20.8","verify":"真机 eleme.enterSettlePage(driver,cond,{ocr}) → payable=20.8, confidence=low, balanced=false delta=-1, needsConfirm=true(OCR丢打包费¥1数字→如实降级);pnpm check 126/126;src/price覆盖97.15%","status":"ok(饿了么结算页 OCR 读数 PASS)"},
     {"n":22,"at":"10-24 18:05","user":"收尾","intent":"会话最终快照","result":"工作区干净、无未提交改动；门禁 pnpm check 全绿 126/126；src/price 行覆盖 97.15%；提交 ad130e5(P4)+7dfc92d(饿了么OCR) 已落库；追加本轮记录与最终快照","verify":"pnpm check EXIT=0; coverage all files 97.15%","status":"ok"}
-    {"n":23,"at":"10-24 18:15","user":"进行下一步","intent":"P5 打磨(一) 隐私/清理/重试/证据绑定","result":"新增 device/redact.ts(零依赖PNG脱敏)、task/cleanup.ts(TTL+保留上限)、core/retry.ts(瞬时重试,红线不重试);runner.bindEvidence 真实绑定 dump+脱敏图/ocrText;平台补截图;启动+完成清理;getResult 证据降级提示;config/patch 增 retryAttempts/retainDays/redact","verify":"真机 mt-s6 脱敏 masked=2 对照确认涂黑;pnpm check 152/152;src/price 覆盖 97.15%;新增 redact/retry/p5 共 23 tests","status":"ok(P5 一阶段完成)"},
+    {"n":23,"at":"10-24 18:15","user":"进行下一步","intent":"P5 打磨(一) 隐私/清理/重试/证据绑定","result":"新增 device/redact.ts(零依赖PNG脱敏)、task/cleanup.ts(TTL+保留上限)、core/retry.ts(瞬时重试,红线不重试);runner.bindEvidence 真实绑定 dump+脱敏图/ocrText;平台补截图;启动+完成清理;getResult 证据降级提示;config/patch 增 retryAttempts/retainDays/redact","verify":"真机 mt-s6 脱敏 masked=2 对照确认涂黑;pnpm check 149/149;src/price 覆盖 97.15%;新增 redact/retry/p5 共 22 tests","status":"ok(P5 一阶段完成)"},
     {"n":24,"at":"10-24 18:45","user":"继续","intent":"P5 打磨(二) 失败取证脱敏/OCR框/证据缺失兜底","result":"capture.ts 默认脱敏(不可脱敏不落图,返回redaction/warning);steps.evidenceRedact(仅测试关);RawQuoteFacts.ocrWords→evidence.rawExtraction.ocrBoxes;bindEvidence 无证据兜底 missingReason","verify":"pnpm check 152/152;test/p5 +3 例;device-p2 断言超时改 evidenceRedact:false;真机本轮掉线未复跑(算法上轮 mt-s6 已验证)","status":"ok(P5 二阶段完成)"},
+    {"n":25,"at":"10-24 18:55","user":"继续(打磨)","intent":"P5 打磨(三) 无线调试 mDNS 自动发现/回连","result":"adb.ts 重连候选:配置host:port→mDNS串号→adb mdns services 当前端口;真机旧:44881 自动切到 mDNS 串号;captureEvidence 落 dump+脱敏图","verify":"真机 probe TB321FU/16/canScreenshot+脱敏PNG;device-p2 +2(28 tests);pnpm check 全绿","status":"ok(P5 三阶段完成)"},
   ],
   "fixes": [
     {"topic":"job owner","file":"src/core/jobs-adapter.ts","detail":"owner=exec.agent.id 贯通"},
@@ -296,4 +305,4 @@
 
 ---
 
-*会话快照：2026-10-24 18:45 · 分支 `main`；**P0–P5 完成**。里程碑：**P2 真机 §8.4 PASS（Lenovo TB321FU / Android 16）**；**P3 美团真机全流程 PASS**（payable=19.9 balanced、confidence=high）；**P4 多平台 + 策略四态 + 谨慎互斥 + 统一输入快照分组**（DoD①②③④ 均落地）；**P4 真机复测** 饿了么 canvas 自绘 → ROI OCR，真机 payable=¥20.8；**P5 打磨（一/二）**：`device/redact.ts` 零依赖 PNG 截图脱敏（真机 mt-s6 `masked=2` 对照确认涂黑、无法脱敏则不落图）、`task/cleanup.ts` 证据/结果 TTL+保留上限清理、`core/retry.ts` 瞬时重试（**验证码/支付绝不重试**）、`runner.bindEvidence` 证据真实绑定（dump+脱敏图+OCR 逐词框）、`device/capture.ts` 失败取证同样默认脱敏。门禁 `pnpm check` **152/152 全绿**、`src/price` 行覆盖 **97.15%**。安全红线全程未触碰（无下单/支付路径、验证码即停零点击、仓内仅脱敏 fixture）。*
+*会话快照：2026-10-24 18:55 · 分支 `main`；**P0–P5 完成**。里程碑：**P2 真机 §8.4 PASS（Lenovo TB321FU / Android 16）**；**P3 美团真机全流程 PASS**（payable=19.9 balanced、confidence=high）；**P4 多平台 + 策略四态 + 谨慎互斥 + 统一输入快照分组**（DoD①②③④ 均落地）；**P4 真机复测** 饿了么 canvas 自绘 → ROI OCR，真机 payable=¥20.8；**P5 打磨（一/二/三）**：`device/redact.ts` 零依赖 PNG 截图脱敏（真机 mt-s6 `masked=2` 对照确认涂黑、无法脱敏则不落图）、`task/cleanup.ts` 证据/结果 TTL+保留上限清理、`core/retry.ts` 瞬时重试（**验证码/支付绝不重试**）、`runner.bindEvidence` 证据真实绑定（dump+脱敏图+OCR 逐词框）、`device/capture.ts` 失败取证同样默认脱敏、`device/adb.ts` 无线调试 mDNS 自动发现/回连（修旧 host:port 失效）。门禁 `pnpm check` **154/154 全绿**、`src/price` 行覆盖 **97.15%**。安全红线全程未触碰（无下单/支付路径、验证码即停零点击、仓内仅脱敏 fixture）。*

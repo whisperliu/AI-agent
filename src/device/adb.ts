@@ -119,6 +119,8 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
   ])
 
   let resolvedSerial: string | undefined = allowAuto ? undefined : opts.serial
+  /** 从 mDNS 学到的无线调试实例名（仅作重连候选，不改配置）。 */
+  let mdnsSerial: string | undefined
 
   /** 执行 `adb <argv>`（自动前置 `-s <serial>`，全局命令除外）。 */
   async function adb(argv: string[], signal?: AbortSignal): Promise<AdbExecResult> {
@@ -137,12 +139,43 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
     return out
   }
 
+  /**
+   * 无线调试地址发现（P5 真机掉线收口）：address（`host:port`）与 mDNS 实例名（含 `_adb-tls-connect`）
+   * 是**不同**的 adb 传输通道。用户曾配了旧 `host:port`，手机重启后端口变化即连不上；
+   * 但 mDNS 实例名往往仍在线。这里按 `adb devices` 从已连通道里学回，作为重连候选（不写配置）。
+   */
+  function learnMdnsSerial(devices: { serial: string; state: string }[]): void {
+    if (mdnsSerial) return
+    const hit = devices.find(
+      (d) => d.state === 'device' && d.serial.includes('._adb-tls-connect._tcp'),
+    )
+    if (hit) mdnsSerial = hit.serial
+  }
+
   function looksNetworkSerial(s: string): boolean {
     return /^[\w.-]+:\d+$/.test(s)
   }
 
+  /**
+   * 主动探 mDNS 无线调试地址（P5 真机掉线收口）：解析 `adb mdns services` 的
+   * `name _adb-tls-connect._tcp host:port`，返回可 `adb connect` 的地址（优先 host:port）。
+   * 手机重启后端口会变，配置里的旧 `host:port` 失效；mDNS 能拿到当前端口。
+   */
+  async function discoverMdnsAddress(signal?: AbortSignal): Promise<string | undefined> {
+    const r = await run(['mdns', 'services'], signal)
+    if (r.code !== 0) return undefined
+    for (const line of r.stdout.split('\n')) {
+      const parts = line.trim().split(/\s+/)
+      // 形如: adb-XXXX  _adb-tls-connect._tcp  192.168.3.44:37289
+      const addr = parts.find((p) => /^[\w.-]+:\d+$/.test(p))
+      if (addr && parts.some((p) => p.includes('_adb-tls-connect._tcp'))) return addr
+    }
+    return undefined
+  }
+
   async function ensureConnected(signal?: AbortSignal): Promise<void> {
     const devices = await listDevices(signal)
+    learnMdnsSerial(devices)
     if (resolvedSerial) {
       if (devices.some((x) => x.serial === resolvedSerial && x.state === 'device')) {
         await maybeDisableAnimations(signal)
@@ -163,12 +196,41 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
     }
 
     // 掉线：若是网络地址，尝试 connect 重连一次（§8.3）。
+    // 重连候选顺序：① 配置的 host:port；② 学到的 mDNS 实例名（手机重启后端口变化时更稳）。
     if (autoReconnect && resolvedSerial && looksNetworkSerial(resolvedSerial)) {
-      const c = await run(['connect', resolvedSerial], signal)
-      const again = await listDevices(signal)
-      if (again.some((d) => d.serial === resolvedSerial && d.state === 'device')) return
+      const candidates = [resolvedSerial, ...(mdnsSerial ? [mdnsSerial] : [])]
+      let lastStderr = ''
+      for (const cand of candidates) {
+        const c = await run(['connect', cand], signal)
+        lastStderr = c.stderr.trim()
+        const again = await listDevices(signal)
+        if (again.some((d) => d.serial === cand && d.state === 'device')) {
+          resolvedSerial = cand
+          await maybeDisableAnimations(signal)
+          return
+        }
+      }
+      // 若 mDNS 通道其实已在线（adb 自动发现的），直接采用。
+      const now = await listDevices(signal)
+      learnMdnsSerial(now)
+      if (mdnsSerial && now.some((d) => d.serial === mdnsSerial && d.state === 'device')) {
+        resolvedSerial = mdnsSerial
+        await maybeDisableAnimations(signal)
+        return
+      }
+      // 最后兜底：主动探 mDNS 当前端口（手机重启后旧 host:port 必然失效）。
+      const discovered = await discoverMdnsAddress(signal)
+      if (discovered) {
+        await run(['connect', discovered], signal)
+        const after = await listDevices(signal)
+        if (after.some((d) => d.serial === discovered && d.state === 'device')) {
+          resolvedSerial = discovered
+          await maybeDisableAnimations(signal)
+          return
+        }
+      }
       throw new Error(
-        `设备未连接且自动重连失败（${resolvedSerial}）：${c.stderr.trim() || 'adb connect 未成功'}。` +
+        `设备未连接且自动重连失败（${resolvedSerial}）：${lastStderr || 'adb connect 未成功'}。` +
           '请确认手机无线调试开启、与电脑同网段、端口为当前值。',
       )
     }
