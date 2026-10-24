@@ -55,10 +55,16 @@ export function assertState(
   }
 }
 
-/** XML 中是否存在带给定 resource-id 的 `<node>`。 */
+/**
+ * XML 中是否存在带给定 resource-id 的 `<node>`。
+ * 支持**短名后缀**：`search_button` 命中 `com.xxx:id/search_button`；全名则按精确匹配。
+ * （真机 id 通常带包名前缀，而选择器写短名，故这里按 `resource-id="…<name>"` 结尾匹配。）
+ */
 export function hasResourceId(xml: string, resourceId: string): boolean {
   const esc = resourceId.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')
-  return new RegExp(`resource-id\\s*=\\s*"${esc}"`).test(xml)
+  // 精确：resource-id="name"；后缀：resource-id="…<pkg>/name"（name 前须是 / 或引号）。
+  const re = new RegExp(`resource-id\\s*=\\s*"(?:[^"]*/)?${esc}"`)
+  return re.test(xml)
 }
 
 function visibleTextsOf(xml: string): string[] {

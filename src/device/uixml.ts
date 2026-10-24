@@ -54,13 +54,45 @@ export function centerOf(b: Bounds): { x: number; y: number } {
   return { x: Math.round((b[0] + b[2]) / 2), y: Math.round((b[1] + b[3]) / 2) }
 }
 
+/** 该点 (x,y) 是否落在 bounds 内。 */
+export function containsPoint(b: Bounds, x: number, y: number): boolean {
+  return x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]
+}
+
+/** 命中最内层节点优先的排序键：面积越小越"内层"。 */
+function areaOf(b: Bounds): number {
+  return Math.max(0, b[2] - b[0]) * Math.max(0, b[3] - b[1])
+}
+
+/** 该点覆盖到的所有节点（按面积升序，最内层在前）。 */
+export function nodesAtPoint(nodes: UiNode[], x: number, y: number): UiNode[] {
+  return nodes
+    .filter((n) => n.bounds && containsPoint(n.bounds, x, y))
+    .sort((a, b) => areaOf(a.bounds!) - areaOf(b.bounds!))
+}
+
+/**
+ * 该点命中的节点（取**最内层**、且有文本/desc/id 的；无文本则退最内层）。
+ * 用于按坐标点击前的安全体检（把命中节点的文案过红线）。
+ */
+export function pickNodeAtPoint(nodes: UiNode[], x: number, y: number): UiNode | undefined {
+  const inside = nodesAtPoint(nodes, x, y)
+  return (
+    inside.find((n) => (n.text ?? '').trim() || (n.label ?? '').trim() || n.resourceId) ?? inside[0]
+  )
+}
+
 /** 按选择器定位第一个命中节点（优先 resourceId > label > text 精确 > text 包含）。 */
 export function findBySelector(
   nodes: UiNode[],
   sel: { resourceId?: string; label?: string; text?: string },
 ): UiNode | undefined {
   if (sel.resourceId) {
-    const hit = nodes.find((n) => n.resourceId === sel.resourceId)
+    const want = sel.resourceId
+    // 支持短名后缀：`search_button` 命中 `com.xxx:id/search_button`；全名则精确匹配。
+    const hit =
+      nodes.find((n) => n.resourceId === want) ??
+      nodes.find((n) => !!n.resourceId && n.resourceId.endsWith('/' + want))
     if (hit) return hit
   }
   if (sel.label) {

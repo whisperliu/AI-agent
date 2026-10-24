@@ -20,6 +20,11 @@ export interface Driver {
   tap(sel: UiSelector): Promise<void>
   /** 在输入框输入文本。 */
   input(sel: UiSelector, text: string): Promise<void>
+  /**
+   * 按屏幕坐标点击（**安全**：实现内先解析该点命中的节点、过 `assertTapSafe`，
+   * 命中下单/支付即拒绝）。用于无稳定 id/文案、只能按几何位置进入的场景（如搜索结果卡片）。
+   */
+  tapPoint?(x: number, y: number): Promise<void>
   /** 上/下滑动。 */
   swipe(dir: 'up' | 'down'): Promise<void>
   /** 截屏，返回 PNG 字节。 */

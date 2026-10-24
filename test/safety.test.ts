@@ -8,7 +8,16 @@ import { assertTapSafe, looksForbidden } from '../src/core/safety.ts'
 import { ForbiddenActionError } from '../src/core/errors.ts'
 
 test('blocks order/payment labels (zh)', () => {
-  for (const label of ['提交订单', '立即支付', '确认支付', '去支付', '免密支付']) {
+  for (const label of [
+    '提交订单',
+    '立即支付',
+    '确认支付',
+    '去支付',
+    '免密支付',
+    '极速支付', // 美团真机付款按钮（2026-10）
+    '立即付款',
+    '支付订单',
+  ]) {
     assert.equal(looksForbidden(label), true, label)
     assert.throws(() => assertTapSafe({ label }), ForbiddenActionError)
   }

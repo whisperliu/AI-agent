@@ -56,6 +56,13 @@ export function createMockDriver(opts: MockDriverOptions): Driver {
       void text
       await delay()
     },
+    async tapPoint(x: number, y: number) {
+      // 安全兜底：坐标点按无法映射到选择器，故仅记录动作（Mock 无真实 UI）。
+      opts.onAction?.({ type: 'tapPoint', platform: activePlatform })
+      void x
+      void y
+      await delay()
+    },
     async swipe(dir) {
       opts.onAction?.({ type: 'swipe', platform: activePlatform })
       void dir

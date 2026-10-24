@@ -44,11 +44,27 @@ interface PlatformStrategy {
 - **驱动解耦（DoD②）**：`meituan.enterSettlePage` 按驱动能力自动选路 —— 无 `probe` 的 `MockDriver` 走 `enterViaOpenTag`（回放 `open-meituan` 后的结算页 dump）；真机 adb（有 `probe`）走 `runMeituanReal`。**上层 `task/runner` 不改**。
 - **分层**：`meituanReal.ts` 属 strategy，只 import `device/driver.ts`（接口）、`device/uixml.ts`（纯解析）、`device/steps.ts`（§30 明确允许平台使用的"动作+断言+恢复"原语）。**不 import** `device/adb.ts` 等具体实现（`check-boundary` R2 已校验）。
 - **纯提取可离线测**：`extractMeituanSettle(nodes, cond, dump)` 不碰设备，按 `resource-id`（`fee_<kind>` / `discount_<kind>` / `payable`）优先、文案兜底（`配送费 ¥2.00`、`满30减5 -¥5.00`）。金额解析优先取 `¥` 前缀，避免"满30减5"误取 30。
-- **真机流程**：首页→搜索→选店→加购→购物车/去结算→**读实付**；每步 `waitAny(anchors)` 复用 `device/steps.waitForAnyState`（验证码/登录即停 + 弹窗恢复 + 超时取证）。**全程只读，绝不点提交订单/支付**（`driver.tap` 内 `assertTapSafe` 兜底）。
+- **真机流程（已全自动跑通，2026-10-24）**：首页→搜索→选店→选规格/加购→去结算→**读实付**；每步 `waitAny(anchors)` 复用 `device/steps.waitForAnyState`（验证码/登录即停 + 弹窗恢复 + 超时取证）。**全程只读，绝不点提交订单/支付**（`driver.tap`/`driver.tapPoint` 内 `assertTapSafe` 兜底）。真机实证：`enterSettlePage(driver)` 从首页全自动跑到结算，返回 `payable=19.9, balanced, needsConfirm=false`。
+- **真机导航要点（实跑校准）**：
+  - **resource-id 后缀匹配**：真机 id 带包名前缀（`com.sankuai.meituan:id/search_layout_area`），选择器写短名；`state.hasResourceId`/`uixml.findBySelector` 均按**后缀**匹配。
+  - **首页搜索入口**是 `search_layout_area`（非 EditText），点入 SearchActivity 才出现 `search_edit_text`（`searchEntry` 与 `searchInput` 分开）。
+  - **店铺页大图 banner 导致 dump 无法 idle/陈旧**：先下滚 1–2 屏越过 banner 再等锚点；滚动后**用文案点击**（坐标会失效）。
+  - **去结算偶发点不中**：点后校验结算锚点，未进则最多重试 3 次。
+  - **结果卡无 id/文案钩子**：用安全的 `driver.tapPoint(x,y)`——先解析该点命中节点的 text/desc/id 过 `assertTapSafe`（命中支付即拒）再点。
 - **OCR 质量门**：真机读不到实付 → `confidence='low'` → `price` 层 `needsConfirm=true`（不硬凑算术）。
-- **真机实测（TB321FU / 美团 2026-10）已校准部分**：首页搜索区 `search_layout_area`/`search_button`；搜索页输入框 `search_edit_text`、`search_button`。搜索结果首条即"香叶·烧鸭下饭菜(天骄店)"。
-- **⚠️ 尚未走通的真机阻碍**：（1）店铺页菜单区依赖**收货地址**，无地址时菜单空转"袋鼠加载中"、`uiautomator` 报 `could not get idle state`；地址属用户个人信息，需**用户本人**设置。（2）搜索结果/店铺页大量控件为混淆短 id（`h5x/myj/vqq`），需按真机 dump 逐一登记；结账/购物车控件待菜单可加载后再校准。（3）中文搜索输入需 ADBKeyboard（见 40-device）。
+- **真机实测（TB321FU / 美团 2026-10）已校准**：首页 `search_layout_area`/`search_button`；搜索页 `search_edit_text`/`search_button`；店铺页 `选规格`→`加入购物车`→`去结算`（文案）；**结算页（OrderConfirmActivity）几乎全无 resource-id**，改由"坐标/行"抽取（见下）。
+- **坐标/行抽取（P3 真机核心）**：`extractMeituanSettle` 在无 resource-id 时按视觉布局抽取——
+  - `buildRows` 按 y 中心聚成"行"、行内按 x 排序；`amountNearLabel` 找"标签（商品原价/打包费/用户配送费/券前…）→ 同一行右侧最近金额"；
+  - 门店 = 商品行上方最近、左对齐、非价格的文本；商品 = 与查询词相似度最高（`price/similarity.itemScore`）的非价格文本；规格/数量取同区块邻近文本（"1 人份，不辣" / "x1"）；
+  - 优惠只认**明确已减**（带 `-¥`/已减/共减），另把"待使用/去使用"红包识别为 `optionalSavings`（`availability='presumed'`，**不计入实付、effectivePrice 也不扣**）。
+  - 实付两种变体：A「券前 ¥X 共减¥Y」（取"券前"右侧）；B 神抢手/一口价店「¥X 共减¥Y」**无券前标签**（取"共减"左侧最近金额）。
+  - 真机实证：A 变体 商品原价 29.98+打包 2+用户配送 3.9−减免 3.9−商家代金券 1 = **30.98**；B 变体 26.98+配送 3.9−减免 3.9−代金券 7.08 = **19.9**（均 balanced、needsConfirm=false）。
+- **文案锚点**：`settleTextAnchors`（外卖配送/到店自取/商品原价/用户配送费/券前/实付）作为无 id 时的结算页判定；`Navigator.waitAny` 同时支持 resourceId 与文案锚点。**注意：`共减` 会出现在店铺页购物车条，不能作结算页锚点（会误判）。**
+- **短路（最安全路径）**：`runMeituanReal` 进入时先探测"是否已在结算页"（1.5s），命中则**直接读实付、零点击**；否则走完整"首页→搜索→选店→加购→去结算"。
+- **验证码红线**：首页冷启动偶发弹**字序验证码**（"请按语序依次点击下图文字"，无字 WebView）。`classifyObstruction` 判 `captcha`（`textless-webview`），真实代码路径抛 `NeedsHumanError` 且零点击（已加回归）；遇之**立即停止、交人工**。
+- **⚠️ 尚未走通的真机阻碍**：（1）**冷启动全流程**（首页→搜索）仍需 ADBKeyboard 注入中文搜索词（见 40-device），且大量控件为混淆短 id（`h5x/myj/vqq`），全流程逐页校准仍需人工在旁；（2）店铺页菜单/加购控件随 App 版本变化，需按真机 dump 持续回填 `selectors/meituan.ts`。当前**已稳定走通并可验收**的是：**结算页 → 读实付**（含坐标抽取、短路零点击）。
 
 ## 测试
 - `test/fixtures` 回放：用 `MockDriver` 跑"首页→搜索→结算"脚本，断言每步 anchor 命中。
-- `test/platform-p3.test.ts`（12 tests，离线）：真机结算页抽取（id 路径 / 文案回退）、`¥28.9 vs ¥289`、`满30减5` 金额、选店导航链路（stub）、**无字 WebView 滑块→NeedsHumanError 且零点击**、升级/定位/加载干扰分类、读不到实付→needsConfirm、危险控件识别。
+- `test/platform-p3.test.ts`（16 tests，离线）：真机结算页抽取（id 路径 / 文案回退）、`¥28.9 vs ¥289`、`满30减5` 金额、选店导航链路（stub）、**无字 WebView 滑块→NeedsHumanError 且零点击**、升级/定位/加载干扰分类、读不到实付→needsConfirm、危险控件识别；
+  **真机结算页（脱敏 fixture `meituan-settle.real-device.xml`，无 resource-id）→ 坐标/行抽取 balanced**、"待使用红包"不进已减（回归）、已在结算页短路零点击、真机付款按钮"极速支付"被识别为危险控件。

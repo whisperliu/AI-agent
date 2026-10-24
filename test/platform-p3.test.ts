@@ -13,6 +13,9 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   extractMeituanSettleFromDump,
+  firstActionableCenter,
+  firstResultCardCenter,
+  isDangerNode,
   parseMoneyText,
   runMeituanReal,
   type Navigator,
@@ -20,7 +23,7 @@ import {
 import { classifyObstruction } from '../src/device/recover.ts'
 import { parseUiNodes, type UiNode } from '../src/device/uixml.ts'
 import { priceQuote } from '../src/price/engine.ts'
-import { NeedsHumanError } from '../src/core/errors.ts'
+import { ForbiddenActionError, NeedsHumanError } from '../src/core/errors.ts'
 import type { ComparisonConditions } from '../src/price/model.ts'
 import type { QuoteDraft } from '../src/price/model.ts'
 
@@ -30,6 +33,7 @@ const homeXml = await readFile(join(FIX, 'home.real.xml'), 'utf8')
 const captchaXml = await readFile(join(FIX, 'captcha.xml'), 'utf8')
 const upgradeXml = await readFile(join(FIX, 'upgrade-popup.xml'), 'utf8')
 const textlessCaptchaXml = await readFile(join(FIX, 'captcha.textless-webview.xml'), 'utf8')
+const realDeviceXml = await readFile(join(FIX, 'meituan-settle.real-device.xml'), 'utf8')
 
 const cond: ComparisonConditions = {
   snapshotId: 'snap-test',
@@ -132,53 +136,115 @@ test('extract: missing payable → confidence low → needsConfirm (OCR gate)', 
   assert.equal(quote.needsConfirm, true)
 })
 
-// ────────────────── 选店导航链路（stub Navigator 回放） ──────────────────
-function stubNavigator(screens: { home: string; store: string; settle: string }): {
-  nav: Navigator
-  taps: string[]
-} {
+// ────────────────── 全流程导航（真实 fixture 回放：首页→搜索→结果→店铺→规格→购物车→结算） ──────────────────
+const homeRd = await readFile(join(FIX, 'meituan-home.real-device.xml'), 'utf8')
+const searchRd = await readFile(join(FIX, 'meituan-search.real-device.xml'), 'utf8')
+const resultsRd = await readFile(join(FIX, 'meituan-results.real-device.xml'), 'utf8')
+const storeRd = await readFile(join(FIX, 'meituan-store.real-device.xml'), 'utf8')
+const specRd = await readFile(join(FIX, 'meituan-specsheet.real-device.xml'), 'utf8')
+const storeAddedRd = await readFile(join(FIX, 'meituan-store-added.real-device.xml'), 'utf8')
+
+function flowNavigator(): { nav: Navigator; taps: string[] } {
   const taps: string[] = []
   const nodesOf = (x: string) => parseUiNodes(x)
-  const ensure = (anchors: { resourceId?: string }[], xml: string, what: string) => {
+  // 屏幕状态机：记录当前应回放哪一屏的 dump（供 firstActionable 用）。
+  const screen: Record<string, string> = { current: homeRd }
+  const ensure = (anchors: { resourceId?: string; text?: string }[], xml: string, what: string) => {
     const ns = nodesOf(xml)
     const ok = anchors.some((a) =>
-      a.resourceId ? ns.some((n) => n.resourceId?.endsWith(a.resourceId!)) : true,
+      a.resourceId
+        ? ns.some((n) => n.resourceId?.endsWith(a.resourceId!))
+        : a.text
+          ? ns.some((n) => (n.text ?? '').includes(a.text!) || (n.label ?? '').includes(a.text!))
+          : false,
     )
-    if (!ok) throw new Error(`stub: anchor miss for ${what}`)
+    if (!ok) throw new Error(`flow: anchor miss for ${what}`)
   }
   const nav: Navigator = {
-    nodes: async () => nodesOf(screens.settle),
-    dump: async () => screens.settle,
+    nodes: async () => nodesOf(screen.current!),
+    dump: async () => screen.current!,
     tap: async (sel, what) => {
-      taps.push(`${what}:${sel.resourceId ?? ''}`)
+      taps.push(`${what}:${sel.resourceId ?? sel.text ?? ''}`)
+      if (what === '搜索入口') screen.current = searchRd
+      else if (what === '选规格') screen.current = specRd
+      else if (what === '加入购物车') screen.current = storeAddedRd
+    },
+    tapPoint: async (x, y, what) => {
+      taps.push(`point:${what}@${x},${y}`)
+      if (what === '第一家店铺') screen.current = storeRd
     },
     input: async (_sel, _t, what) => {
       taps.push(`input:${what}`)
     },
-    swipeUp: async () => {},
+    swipeUp: async () => {
+      // 店铺页首次下滚越过 banner 后，菜单/规格进入视野。
+      if (screen.current === storeRd) screen.current = storeAddedRd
+    },
+    repaint: async () => {},
+    hasAny: async (keywords) => {
+      const ns = nodesOf(screen.current!)
+      return ns.some((n) =>
+        keywords.some((k) => (n.text ?? '').includes(k) || (n.label ?? '').includes(k)),
+      )
+    },
+    firstResultCard: async () => firstResultCardCenter(nodesOf(resultsRd)),
+    firstActionable: async (keywords) => firstActionableCenter(nodesOf(screen.current!), keywords),
     waitAny: async (anchors, what) => {
+      if (what.startsWith('结算页(已在)')) throw new Error('flow: not on settle yet')
       const xml =
         what === '首页'
-          ? screens.home
-          : what === '店铺列表' || what === '店铺页'
-            ? screens.store
-            : screens.settle
-      ensure(anchors as { resourceId?: string }[], xml, what)
+          ? homeRd
+          : what === '搜索页'
+            ? searchRd
+            : what === '搜索结果'
+              ? resultsRd
+              : what === '店铺页'
+                ? storeRd
+                : what === '结算页'
+                  ? realDeviceXml
+                  : undefined
+      if (!xml) throw new Error(`flow: unknown wait "${what}"`)
+      ensure(anchors as { resourceId?: string; text?: string }[], xml, what)
+      screen.current = xml
       return { nodes: nodesOf(xml), dump: xml }
     },
   }
   return { nav, taps }
 }
 
-test('runMeituanReal: fires search→store→cart and extracts payable', async () => {
-  const storeXml = `<hierarchy><node text="某店" resource-id="com.sankuai.meituan:id/poi_name" class="android.widget.TextView" package="com.sankuai.meituan" clickable="true" bounds="[0,0][100,50]"/><node text="加入购物车" resource-id="com.sankuai.meituan:id/add_to_cart" class="android.widget.Button" package="com.sankuai.meituan" clickable="true" bounds="[0,60][100,110]"/></hierarchy>`
-  const { nav, taps } = stubNavigator({ home: homeXml, store: storeXml, settle: settleXml })
+test('runMeituanReal: full cold-start flow (home→search→result→store→spec→cart→settle) reads payable', async () => {
+  const { nav, taps } = flowNavigator()
   const facts = await runMeituanReal(nav, cond)
-  assert.equal(facts.payable, 26.9)
-  assert.ok(taps.some((t) => t.includes('搜索框')))
+  // 真实结算页读数（券前 ¥30.98）。
+  assert.equal(facts.payable, 30.98)
+  // 关键步骤都发生了（且不含任何下单/支付点击）。
+  assert.ok(taps.some((t) => t.includes('搜索入口')))
+  assert.ok(taps.some((t) => t.includes('搜索输入')))
   assert.ok(taps.some((t) => t.includes('第一家店铺')))
+  assert.ok(taps.some((t) => t.includes('选规格')))
   assert.ok(taps.some((t) => t.includes('加入购物车')))
-  assert.ok(taps.some((t) => t.includes('购物车')))
+  assert.ok(taps.some((t) => t.includes('去结算')))
+  assert.ok(!taps.some((t) => /支付|提交订单|付款/.test(t)), '绝不应点支付/提交')
+})
+
+// ────────────────── 坐标点按安全：tapPoint 命中支付控件必须被拦（红线 1） ──────────────────
+test('tapPoint (adb) on a pay button → ForbiddenActionError, no input tap', async () => {
+  const calls: string[] = []
+  const runner2 = async (argv: string[]) => {
+    calls.push(argv.join(' '))
+    if (argv[0] === 'devices')
+      return { code: 0, stdout: 'List of devices attached\nx\tdevice\n', stderr: '' }
+    if (argv.includes('uiautomator')) return { code: 0, stdout: realDeviceXml, stderr: '' }
+    return { code: 0, stdout: '', stderr: '' }
+  }
+  const { createAdbDriver } = await import('../src/device/adb.ts')
+  const d2 = createAdbDriver({ serial: 'x', runner: runner2 as never, disableAnimations: false })
+  // "极速支付" 按钮 bounds [1270,2395][1570,2505]（见 fixture），点其中心。
+  await assert.rejects(
+    () => d2.tapPoint!(1420, 2450),
+    (e: unknown) => e instanceof ForbiddenActionError,
+  )
+  assert.ok(!calls.some((c) => c.includes('input tap')), '被拦截时不应真正 input tap')
 })
 
 // ────────────────── 验证码：含无字 WebView 滑块 ──────────────────
@@ -238,4 +304,173 @@ test('isDangerNode flags submit/pay controls', async () => {
   assert.equal(isDangerNode(submit), true)
   const store = nodes.find((n) => n.resourceId?.endsWith('store_name'))!
   assert.equal(isDangerNode(store), false)
+})
+
+// ────────────────── 真机结算页（无 resource-id，坐标/行抽取）──────────────────
+
+test('extract (real device, no ids): row/坐标抽取实付+费用+优惠 → balanced', () => {
+  const realCond: ComparisonConditions = {
+    snapshotId: 'snap-real',
+    item: '毛豆炒肉木桶饭',
+    qty: 1,
+    spec: [],
+    composition: [],
+    deliverTo: { city: '上海', lat: 0, lng: 0 },
+    fixedAt: '2026-10-24T14:40:00+08:00',
+    hash: 'h-real',
+  }
+  const facts = extractMeituanSettleFromDump(realDeviceXml, realCond)
+  // 实付：底部「券前 ¥30.98」（未使用红包前的到手价）。
+  assert.equal(facts.payable, 30.98)
+  assert.equal(facts.confidence, 'high')
+  // 门店/商品/规格/数量来自坐标定位。
+  assert.equal(facts.storeName, '江西小炒(盛夏路店)')
+  assert.equal(facts.itemName, '毛豆炒肉木桶饭')
+  assert.ok(facts.itemSpec?.includes('人份') && facts.itemSpec?.includes('不辣'))
+  assert.equal(facts.qty, 1)
+  // 费用：商品原价 29.98 + 打包 2 + 用户配送 3.9。
+  const kinds = Object.fromEntries(facts.fees.map((f) => [f.kind, f.amount]))
+  assert.equal(kinds.goods, 29.98)
+  assert.equal(kinds.packing, 2)
+  assert.equal(kinds.delivery, 3.9)
+  // 已减：配送费减免 3.9 + 商家代金券/满减 1（均含在实付里）。
+  const dk = Object.fromEntries(facts.discounts.map((d) => [d.kind, d.amount]))
+  assert.equal(dk.delivery_waiver, 3.9)
+  assert.equal(dk.promo, 1)
+  // "待使用 ¥15 红包" → optionalSaving(presumed)，**不得**当作已减优惠。
+  assert.equal(
+    facts.discounts.some((d) => d.kind === 'coupon'),
+    false,
+  )
+  assert.equal(facts.optionalSavings?.length, 1)
+  assert.equal(facts.optionalSavings?.[0]?.amount, 15)
+  assert.equal(facts.optionalSavings?.[0]?.availability, 'presumed')
+
+  const quote = priceQuote(draftFrom(facts))
+  // 29.98 + 2 + 3.9 − 3.9 − 1 = 30.98 → 平衡
+  assert.equal(quote.arithmetic.balanced, true)
+  assert.equal(quote.arithmetic.expected, 30.98)
+  // presumed 红包不抵扣 → 到手价仍 30.98
+  assert.equal(quote.effectivePrice, 30.98)
+  assert.equal(quote.needsConfirm, false)
+})
+
+test('extract: "待使用红包" never inflates discount (regression)', () => {
+  // 仅一行"美团红包 待使用 15元红包" + 一条费用行，确保红包不被计入 discounts。
+  const xml = `<hierarchy rotation="0">
+   <node text="商品原价" class="android.widget.TextView" package="com.sankuai.meituan" clickable="false" bounds="[50,100][210,150]"/>
+   <node text="29.98" class="android.widget.TextView" package="com.sankuai.meituan" clickable="false" bounds="[1427,100][1520,150]"/>
+   <node text="美团红包" class="android.widget.TextView" package="com.sankuai.meituan" clickable="false" bounds="[50,300][190,350]"/>
+   <node text="待使用" class="android.widget.TextView" package="com.sankuai.meituan" clickable="false" bounds="[1263,300][1368,350]"/>
+   <node text="15元红包" class="android.widget.TextView" package="com.sankuai.meituan" clickable="false" bounds="[1388,300][1510,350]"/>
+   <node text="实付" class="android.widget.TextView" package="com.sankuai.meituan" clickable="false" bounds="[50,900][120,950]"/>
+   <node text="¥29.98" class="android.widget.TextView" package="com.sankuai.meituan" clickable="false" bounds="[1400,900][1520,950]"/>
+  </hierarchy>`
+  const facts = extractMeituanSettleFromDump(xml, cond)
+  assert.equal(facts.payable, 29.98)
+  assert.equal(facts.discounts.filter((d) => d.kind === 'coupon').length, 0)
+  const quote = priceQuote(draftFrom(facts))
+  // 未把 15 元红包当已减 → 不会把 29.98 算成 14.98
+  assert.equal(quote.arithmetic.expected, 29.98)
+  assert.equal(quote.arithmetic.balanced, true)
+})
+
+// ────────────────── 真机短路：已在结算页 → 直接读实付、零点击 ──────────────────
+test('runMeituanReal: already on settle page → reads payable with zero taps', async () => {
+  const taps: string[] = []
+  const nav: Navigator = {
+    nodes: async () => parseUiNodes(realDeviceXml),
+    dump: async () => realDeviceXml,
+    tap: async (sel, what) => {
+      taps.push(`${what}:${sel.resourceId ?? sel.text ?? ''}`)
+    },
+    input: async (_sel, _t, what) => {
+      taps.push(`input:${what}`)
+    },
+    swipeUp: async () => {},
+    waitAny: async (anchors, _what, _t) => {
+      const ns = parseUiNodes(realDeviceXml)
+      const ok = anchors.some((a) =>
+        a.resourceId
+          ? ns.some((n) => n.resourceId?.endsWith(a.resourceId!))
+          : a.text
+            ? ns.some((n) => (n.text ?? '').includes(a.text!))
+            : false,
+      )
+      if (!ok) throw new Error('anchor miss')
+      return { nodes: ns, dump: realDeviceXml }
+    },
+  }
+  const realCond: ComparisonConditions = {
+    snapshotId: 's',
+    item: '毛豆炒肉木桶饭',
+    qty: 1,
+    spec: [],
+    composition: [],
+    deliverTo: { city: '上海', lat: 0, lng: 0 },
+    fixedAt: '2026-10-24T14:40:00+08:00',
+    hash: 'h',
+  }
+  const facts = await runMeituanReal(nav, realCond)
+  assert.equal(facts.payable, 30.98)
+  // 已在结算页 → 不应发生任何点击（最安全路径）。
+  assert.equal(taps.length, 0)
+})
+
+// ────────────────── 红线：真机真实付款按钮"极速支付"必须被识别为危险控件 ──────────────────
+test('isDangerNode flags real 美团 "极速支付" pay button', () => {
+  const nodes = parseUiNodes(realDeviceXml)
+  const payBtn = nodes.find((n) => (n.text ?? '').includes('极速支付'))
+  assert.ok(payBtn, 'fixture 应含"极速支付"')
+  assert.equal(isDangerNode(payBtn!), true)
+})
+
+// ────────────────── 红线：真机满页验证码（home 拦截）→ runMeituanReal 走真实代码路径必须 NeedsHumanError 且零点击 ──────────────────
+test('runMeituanReal (real code path): home captcha → NeedsHumanError, zero taps', async () => {
+  let taps = 0
+  let dumps = 0
+  const fakeDriver = {
+    dump: async () => {
+      dumps++
+      return captchaXml
+    },
+    tap: async () => {
+      taps++
+    },
+    input: async () => {
+      taps++
+    },
+    swipe: async () => {},
+    screencap: async () => new Uint8Array(),
+  }
+  // createNavigator + runMeituanReal 走真实 waitForAnyState/classifyObstruction 路径。
+  const { createNavigator } = await import('../src/platform/meituanReal.ts')
+  await assert.rejects(
+    () => runMeituanReal(createNavigator(fakeDriver as never, 500), cond),
+    (e: unknown) => e instanceof NeedsHumanError,
+  )
+  assert.equal(taps, 0, '命中验证码时绝不能有任何点击')
+  assert.ok(dumps >= 1)
+})
+
+// ────────────────── 结算页变体 B：神抢手/一口价店（无"券前"标签，底部"¥19.9 共减¥10.98"）──────────────────
+const shenqiandXml = await readFile(join(FIX, 'meituan-settle-shenqiand.real-device.xml'), 'utf8')
+test('extract (real 神抢手): no "券前" label → payable from left of "共减" → balanced', () => {
+  const c: ComparisonConditions = {
+    snapshotId: 's',
+    item: '腐竹炒肉木桶饭',
+    qty: 1,
+    spec: [],
+    composition: [],
+    deliverTo: { city: '上海', lat: 0, lng: 0 },
+    fixedAt: '2026-10-24T15:32:00+08:00',
+    hash: 'h',
+  }
+  const facts = extractMeituanSettleFromDump(shenqiandXml, c)
+  assert.equal(facts.payable, 19.9) // 底部"¥19.9 共减¥10.98"的 ¥19.9
+  assert.equal(facts.storeName, '江西小炒(盛夏路店)')
+  const quote = priceQuote(draftFrom(facts))
+  // 26.98 + 0 + 3.9 − 3.9(配送减免) − 7.08(商家代金券) = 19.9 → 平衡
+  assert.equal(quote.arithmetic.balanced, true)
+  assert.equal(quote.needsConfirm, false)
 })

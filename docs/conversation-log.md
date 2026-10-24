@@ -137,6 +137,50 @@
 - **处理**：按约定做**最终快照**：补全时间跨度/结束状态、追加本轮、更新 JSON 元数据与页脚，并提交一次。
 - **结论**：本次会话以 **P1 完成**收尾；P2 真机（adb）留待后续。
 
+### 轮次 16 · 继续执行：P3 真机结算页读实付走通（2026-10-24 14:55）
+- **意图**：用户发"继续执行"。接手时真机（TB321FU）已解锁、美团停在**真实结算页**（OrderConfirmActivity），此前 P3 一直卡在"读不到价"。
+- **关键发现**：该结算页 **resource-id 几乎全缺**（payable/fee_*/discount_* 都没有，15 个 id 全是混淆短名）→ 旧 `extractMeituanSettle` 只能拿到 `payable=null`、门店错读成商品名。
+- **做了什么**：
+  - 用真机 dump 校准，**重写 `extractMeituanSettle` 为坐标/行抽取**（`buildRows` 按 y 聚行；`amountNearLabel` 取"标签→同行右侧最近金额"；门店/商品/规格用相对坐标 + 相似度定位）。
+  - 发现并修复"**待使用 ¥15 红包**被当已减 → 实付算成 15.98"的误算：改为 `optionalSavings(presumed)`，不进 discounts、不抵扣。
+  - 结算页**文案锚点**（外卖配送/到店自取/商品原价/券前…）+ `runMeituanReal` **已在结算页则零点击短路**。
+  - **红线加固**：美团真实付款按钮"**极速支付**"原不在禁用词表 → 补 `极速支付` 等并加回归。
+  - 脱敏真机 fixture `test/fixtures/meituan-settle.real-device.xml` + 16 个 P3 测试。
+- **验证**：真机实跑 `payable=30.98, balanced=true, confidence=high, needsConfirm=false, cheapest=meituan 30.98, 1 可比组`；`pnpm check` **101/101**；coverage 95.89%。
+- **边界**：冷启动"首页→搜索→加购"逐页控件仍需按真机 dump 继续校准；已可验收的是**结算页读数**。全程只读，未点任何提交/支付。
+
+### 轮次 17 · 尝试冷启动全流程 → 真机触发满页验证码，红线即停（2026-10-24 15:00）
+- **意图**：目标要求真机跑通"搜索→选店→加购→结算→读实付"全流程。
+- **过程**：从首页发起冷启动（`am force-stop` 后重开美团）时，**首屏弹出字序验证码**（"请按语序依次点击下图文字"，无字 WebView `layout_webview`）。按 AGENTS.md §0-2 **立即停止**，未做任何识别/点击。
+- **验证拦截**：`classifyObstruction(真机dump)` = `captcha`（`textless-webview`）；新增 `runMeituanReal` **真实代码路径**（假 Driver + 真实 `createNavigator`）回归：抛 `NeedsHumanError` 且 `taps===0`。
+- **验证**：`pnpm check` **102/102**。
+- **结论/边界**：冷启动全流程实跑**被验证码阻断**，需用户本人手动过一次验证；「结算页→读实付」已 PASS。全程只读，未破解验证码、未点击任何支付控件。
+
+### 轮次 18 · P3 冷启动全流程真机自动走通（2026-10-24 15:37）✅
+- **意图**：验证码清除后，把 objective 的"搜索→选店→加购→结算→读实付"用**插件真实代码路径**在真机上跑通（非手动）。
+- **实跑证据**：`createAdbDriver → meituan.enterSettlePage(driver, cond)` 从首页**全自动**跑完 首页→搜索"腐竹炒肉木桶饭"→选首店→选规格/加购→去结算→读实付 = `payable=19.9, balanced=true, confidence=high, needsConfirm=false, store=江西小炒(盛夏路店), item=腐竹炒肉木桶饭`。截图 `FINAL_coldstart_pass.png`。
+- **实跑暴露并修掉的真机 bug**：
+  1. **resource-id 短名后缀不匹配**（`state.hasResourceId`/`uixml.findBySelector` 精确匹配 vs 真机 `com.x:id/name`）→ 改后缀匹配。
+  2. 首页入口 `search_layout_area` ≠ 搜索页 `search_edit_text`（拆 `searchEntry`/`searchInput`）。
+  3. 店铺页大图 banner 致 dump 陈旧 → 先下滚越过 banner 再等锚点、滚动后用**文案点击**。
+  4. `共减` 在店铺页购物车条也出现 → 移出结算页锚点（误判根因）。
+  5. 神抢手/一口价店底部「¥19.9 共减¥10.98」无"券前" → `payableFromRows` 取"共减"左侧金额；去结算后校验+重试 3 次。
+  6. 新增安全 `tapPoint`（解析命中节点过 `assertTapSafe` 再点，命中"极速支付"即拒）。
+- **验证**：`pnpm check` **104/104**；`test/platform-p3.test.ts` 19 tests（真实 fixture 全流程回放、tapPoint 拦支付、神抢手变体 balanced、验证码真实路径零点击）；新增 8 个脱敏真机 fixture。
+- **红线/隐私**：全程只读；真实 dump 仅存 `.price-agent/`，入 git 只有脱敏 fixture（手机号/地址/姓名已替换）。
+- **结论**：**P3 真机全流程 PASS，objective 达成**。
+
+### 轮次 19 · 收尾：改善上下文占用（文本优先）+ 最终快照（2026-10-24 15:44）
+- **意图**：用户反馈"跑任务上下文不足"→ 收尾。
+- **处理**：
+  1. 定位根因：非插件塞图（`price_agent` 只回文本、截图只落 `.price-agent/`），而是**调试期逐张 `read_image` 读整屏 PNG**（单张 1–3MB）。
+  2. 新增 `scripts/evidence-inspect.mjs`（dump→紧凑文本+坐标，`--settle/--clickable/--filter`），替代读图。
+  3. `AGENTS.md` §2 增"真机调试·省上下文（强制）"规则；`README.md` 工具链补说明。
+  4. 清理 `.price-agent/evidence` 35MB→1.6MB（仅留最终证据图）。
+  5. 本文件做**最终快照**（时间跨度→15:44、追加本轮、JSON/页脚更新）。
+- **验证**：`pnpm check` **104/104 全绿**；脚本对脱敏 fixture 输出正确。
+- **结论**：真机调试默认走文本路径，上下文不再被截图撑爆；P3 全流程保持 PASS。
+
 ---
 
 ## 3. 关键修复与决策（贯穿本轮）
@@ -194,7 +238,11 @@
     {"n":12,"at":"13:11","user":"收尾，P1收工。","intent":"final-snapshot","result":"最终快照并提交","verify":"gate green","status":"ok"},
     {"n":13,"at":"13:12","user":"下一步P2真机","intent":"build P2 real-device channel","result":"adb 驱动/连接重连/能力探测/弹窗恢复/截图留证/probe+selfCheck/演练脚本 + 修 assertTapSafe 漏检 text","verify":"pnpm check 82/82; coverage 95.51%; 无设备可读报错","status":"ok(真机PASS待用户连机)"},
     {"n":14,"at":"15:08","user":"收尾","intent":"final-snapshot","result":"时间跨度/结束状态/期间提交更正 + 追加本轮 + JSON/页脚","verify":"pnpm check 82/82","status":"ok"},
-    {"n":15,"at":"10-24 13:35","user":"测试真机 → 走无线 → 补文档(已重启)","intent":"real-device test","result":"USB 不通(仅充电线/无 root 装 usbip) → 无线调试 pair+connect；密钥同步到 HOME；配置 mock→adb；重启后 probe 回真机 TB321FU","verify":"真机 dump/截屏/probe 全通过；GUI probe 返回 TB321FU","status":"ok(真机 §8.4 PASS)"}
+    {"n":15,"at":"10-24 13:35","user":"测试真机 → 走无线 → 补文档(已重启)","intent":"real-device test","result":"USB 不通(仅充电线/无 root 装 usbip) → 无线调试 pair+connect；密钥同步到 HOME；配置 mock→adb；重启后 probe 回真机 TB321FU","verify":"真机 dump/截屏/probe 全通过；GUI probe 返回 TB321FU","status":"ok(真机 §8.4 PASS)"},
+    {"n":16,"at":"10-24 14:55","user":"继续执行","intent":"P3 真机校准(结算页读实付)","result":"真机结算页无 resource-id → 重写 extractMeituanSettle 为坐标/行抽取；待使用红包转 optionalSaving；结算页文案锚点+短路零点击；红线补 极速支付","verify":"真机 payable=30.98 balanced=true confidence=high needsConfirm=false；pnpm check 101/101；coverage 95.89%","status":"ok(P3 结算页读数 PASS)"},
+    {"n":17,"at":"10-24 15:00","user":"(goal round 继续)","intent":"冷启动全流程 搜索→选店→加购→结算","result":"首页首屏弹出字序验证码(无字WebView) → 按红线 §0-2 立即停止，未识别/未点击；补 runMeituanReal 真实代码路径 NeedsHumanError+零点击回归","verify":"classifyObstruction=captcha；pnpm check 102/102","status":"blocked(需人工过验证码)"},
+    {"n":18,"at":"10-24 15:37","user":"(goal round 继续，验证码已清除)","intent":"P3 真机冷启动全流程自动化跑通","result":"enterSettlePage(driver) 从首页全自动 搜索→选店→选规格/加购→去结算→读实付 = payable 19.9 balanced；修 id 后缀匹配/首页入口/banner dump/共减误判/神抢手变体/新增安全 tapPoint","verify":"真机 payable=19.9 balanced=true needsConfirm=false；pnpm check 104/104；19 P3 tests + 8 脱敏 fixture","status":"ok(P3 全流程 PASS)"},
+    {"n":19,"at":"10-24 15:44","user":"有一个问题，现在对话跑传递图片太多了…改进一下 / 收尾","intent":"降低上下文占用 + 收尾","result":"新增 scripts/evidence-inspect.mjs(dump→紧凑文本+坐标，替代读图)；AGENTS §2 加省上下文强制规则；README 补说明；清理 35MB 调试截图→1.6MB；本文件最终快照","verify":"pnpm check 104/104；脚本对脱敏 fixture 输出正确","status":"ok"}
   ],
   "fixes": [
     {"topic":"job owner","file":"src/core/jobs-adapter.ts","detail":"owner=exec.agent.id 贯通"},
@@ -202,16 +250,20 @@
     {"topic":"readonly sandbox","file":"scripts/*","detail":"--patch 叠加 / install 脚本"},
     {"topic":"safety text gap","file":"src/core/safety.ts","detail":"assertTapSafe 补检 text（P2 发现）"},
     {"topic":"adb binary screencap","file":"src/device/adb.ts","detail":"screencap 走 pull 文件而非 utf8"},
-    {"topic":"adb key home","file":"/home/liuqiaoqiao/.android","detail":"配对密钥同步到 dsh 进程 HOME，避免 unauthorized"}
+    {"topic":"adb key home","file":"/home/liuqiaoqiao/.android","detail":"配对密钥同步到 dsh 进程 HOME，避免 unauthorized"},
+    {"topic":"真机结算页无 id","file":"src/platform/meituanReal.ts","detail":"坐标/行抽取（buildRows+amountNearLabel）替代缺失 resource-id"},
+    {"topic":"待使用红包误当已减","file":"src/platform/meituanReal.ts","detail":"转 optionalSaving(presumed)，不进 discounts/不抵扣 → 实付不再被算低 15 元"},
+    {"topic":"付款按钮漏拦(极速支付)","file":"src/core/safety.ts","detail":"FORBIDDEN_TEXTS 补 极速支付/立即付款等（真机发现）"}
   ],
   "deliverables": [
     "src/**","test/**","scripts/web-plugin.patch.yml","scripts/install-into-web-profile.sh",
     "scripts/device-min-experiment.sh","scripts/device-rehearsal.mjs",
-    "docs/conversation-log.md","CHANGELOG.md[19]-[26]"
+    "test/fixtures/meituan-settle.real-device.xml",
+    "docs/conversation-log.md","CHANGELOG.md[19]-[31]"
   ]
 }
 ```
 
 ---
 
-*会话快照：2026-10-24 13:35 · P0/P1/P2(代码) 全部已提交（HEAD `e34301c`）；**P2 真机 §8.4 最小实验 PASS（Lenovo TB321FU 无线调试 `192.168.3.44:44881`）**；下一步 P3。*
+*会话快照：2026-10-24 15:44 · P0/P1/P2(代码) 已提交（HEAD `e34301c`）；**P2 真机 §8.4 PASS（Lenovo TB321FU）**；**P3 真机全流程 PASS（首页→搜索→选店→加购→去结算→读实付，payable=19.9、balanced、confidence=high、needsConfirm=false；券前变体 30.98 亦 PASS）**；**已改善上下文占用（文本优先 + evidence-inspect 脚本 + 清理调试截图）**；下一步 P4 多平台。*

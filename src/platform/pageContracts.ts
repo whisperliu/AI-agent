@@ -21,7 +21,11 @@ function byTexts(texts: string[]): UiSelector[] {
 export const MEITUAN_PAGE_CONTRACTS: PageContract[] = [
   {
     page: 'settle',
-    anchors: byIds([...MEITUAN_SELECTORS.settleAnchors]),
+    // 真机美团结算页几无 resource-id，同时登记文案锚点（外卖配送/到店自取/商品原价/券前…）。
+    anchors: [
+      ...byIds([...MEITUAN_SELECTORS.settleAnchors]),
+      ...byTexts([...MEITUAN_SELECTORS.settleTextAnchors]),
+    ],
     requireTexts: [],
   },
   {

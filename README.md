@@ -65,6 +65,7 @@ test/             node --test 单测 + fixtures
 | 格式化 | `pnpm format` / `pnpm format:check` | Prettier 3 |
 | 测试 | `pnpm test` / `pnpm test:watch` | 内置 `node --test`（不引 jest/vitest） |
 | 全量门禁 | `pnpm check` | typecheck → lint → format:check → test |
+| 证据文本检查 | `node scripts/evidence-inspect.mjs <dump.xml> [--settle\|--clickable] [--filter kw…]` | 把真机 dump 解析成**紧凑文本+坐标**，避免逐张读整屏 PNG 吃满上下文（见 AGENTS.md §2「真机调试省上下文」） |
 
 ### 开发环境注意（本机沙箱）
 

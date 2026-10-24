@@ -21,6 +21,11 @@ export const FORBIDDEN_TEXTS: readonly string[] = [
   '确认购买',
   '提交支付',
   '去结算并支付',
+  '极速支付', // 美团结算页底部真实付款按钮（2026-10 真机实测，原遗漏）
+  '立即付款',
+  '去付款',
+  '确认付款',
+  '支付订单',
   // en
   'place order',
   'submit order',

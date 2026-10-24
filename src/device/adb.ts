@@ -15,7 +15,7 @@ import { assertTapSafe } from '../core/safety.ts'
 import { StateAssertionError } from '../core/errors.ts'
 import type { Driver, UiSelector } from './driver.ts'
 import { assertNoHumanRequired } from './recover.ts'
-import { centerOf, findBySelector, parseUiNodes } from './uixml.ts'
+import { centerOf, findBySelector, nodesAtPoint, parseUiNodes, pickNodeAtPoint } from './uixml.ts'
 import type { DeviceProbe } from './probe.ts'
 import { analyzeDump, isValidPng, parseForeground, parseWmSize } from './probe.ts'
 
@@ -249,6 +249,30 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
     if (r.code !== 0) throw new Error(`input tap 失败：${r.stderr.trim()}`)
   }
 
+  /**
+   * 按屏幕坐标点击（安全）：先 dump 解析该点命中的**最小**节点，把它的全部文本/desc/id 过
+   * `assertTapSafe`（命中订单/支付即拒绝），再 `input tap`。用于无稳定 id/文案、只能几何定位的场景。
+   */
+  async function tapPoint(x: number, y: number, signal?: AbortSignal): Promise<void> {
+    const xml = await dump(signal)
+    const nodes = parseUiNodes(xml)
+    const hit = pickNodeAtPoint(nodes, x, y)
+    if (hit) {
+      const hay = `${hit.text ?? ''} ${hit.label ?? ''} ${hit.resourceId ?? ''}`
+      assertTapSafe({ text: hit.text, label: hit.label, resourceId: hit.resourceId })
+      // 再兜底扫一遍该点覆盖到的所有节点，避免容器标错漏检支付文案。
+      for (const n of nodesAtPoint(nodes, x, y)) {
+        assertTapSafe({ text: n.text, label: n.label, resourceId: n.resourceId })
+      }
+      void hay
+    }
+    const r = await adb(
+      ['shell', 'input', 'tap', String(Math.round(x)), String(Math.round(y))],
+      signal,
+    )
+    if (r.code !== 0) throw new Error(`input tap 失败：${r.stderr.trim()}`)
+  }
+
   async function input(sel: UiSelector, text: string, signal?: AbortSignal): Promise<void> {
     await tap(sel, signal) // 先聚焦输入框
     if (text && unicodeIme) {
@@ -353,6 +377,7 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
     probe,
     dump,
     tap,
+    tapPoint,
     input,
     swipe,
     screencap,

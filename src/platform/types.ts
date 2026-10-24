@@ -10,6 +10,7 @@ import type {
   DiscountScope,
   FeeKind,
   FeeSource,
+  OptionalSaving,
 } from '../price/model.ts'
 
 /** 抽取到的一组原始事实（platform 产出；engine 负责判账）。 */
@@ -35,6 +36,11 @@ export interface RawQuoteFacts {
   }[]
   /** 结算页实付（纯事实）。 */
   payable: number
+  /**
+   * 未纳入实付的"可得优惠"（如美团"待使用红包"）——结算页明确展示但**未自动抵扣**。
+   * 作为 optionalSaving 交给 price：只有 verified 才在 effectivePrice 里扣，避免把"待使用"当"已用"。
+   */
+  optionalSavings?: OptionalSaving[]
   /** 识别可信度（tree 读取 → high；OCR → 由质量门下调）。 */
   confidence: 'high' | 'medium' | 'low'
   /** 抽取来源（tree/ocr），写入 evidence 与 extraction.byField。 */

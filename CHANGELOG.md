@@ -385,6 +385,55 @@
 - **边界**：关闭动画属**测试自动化通用做法**（不改设备数据、不绕过风控）；若用户不希望改动画可设 `disableAnimations:false`。
 - **更新后状态**：真机"外卖频道→店铺菜单"可稳定读取；继续加购→结算→读实付。
 
+### [31] 2026-10-24 14:55 · P3 真机「结算页→读实付」走通并验收（坐标/行抽取）+ 红线补"极速支付"
+- **为什么**：真机（TB321FU / 美团）首次进入**真实结算页**（OrderConfirmActivity）后发现：该页**几乎全无 resource-id**（payable/fee_*/discount_* 全缺失），旧的 id/文案抽取拿不到实付（`payable=null`、门店错读为商品名），P3 一直卡在"读不到价"。本次用真机 dump 校准，让抽取基于**视觉布局**工作。
+- **做了什么**：
+  1. **重写 `platform/meituanReal.ts::extractMeituanSettle` 为"坐标/行"抽取**（id 优先、布局兜底）：`buildRows` 按 y 聚行、`amountNearLabel` 取"标签→同行右侧最近金额"；门店取商品行上方最近左对齐文本、商品取与查询词相似度最高（`price/similarity.itemScore`）、规格/数量取同区块邻近文本。
+  2. **优惠只认"明确已减"**（带 `-¥`/已减/共减）；把"待使用/去使用"红包识别为 **`optionalSavings`（availability=presumed）**，**不进 discounts、不抵扣实付**（修一条"把 ¥15 待使用红包当已减→实付被算成 15.98"的误算）。
+  3. **`platform/types.ts` 增 `optionalSavings`**；`task/runner.draftFromFacts` 透传到 `QuoteDraft`（engine 已支持 presumed 不抵扣）。
+  4. **文案锚点 + 短路**：`selectors/meituan.ts` 增 `settleTextAnchors`（外卖配送/到店自取/商品原价/用户配送费/券前/实付/共减…）；`Navigator.waitAny` 同时支持 resourceId 与文案；`runMeituanReal` 进入先探测"是否已在结算页"（1.5s），命中则**直接读数、零点击**。`pageContracts.ts` 结算页契约并入文案锚点。
+  5. **红线加固（真机发现）**：美团真实付款按钮是 **"极速支付"**，原 `FORBIDDEN_TEXTS` 未含 → `core/safety.ts` 补 `极速支付/立即付款/去付款/确认付款/支付订单`，并补回归；`isDangerNode` 同步识别"极速支付"。
+  6. **脱敏 fixture**：`test/fixtures/meituan-settle.real-device.xml`（真机结算页，地址/姓名/手机号已脱敏）。
+- **验证方式**：
+  - **真机实跑（只读，未点任何支付/提交）**：`createAdbDriver → meituan.enterSettlePage → extractMeituanSettle → priceQuote → compare` 结果为 `payable=30.98, effective=30.98, balanced=true, confidence=high, needsConfirm=false, cheapest=meituan 30.98, 1 个可比组`；抽取明细：商品原价 29.98 + 打包 2 + 用户配送 3.9 − 配送费减免 3.9 − 商家代金券/满减 1 = 30.98。
+  - **离线**：`pnpm check` **101/101 全绿**（typecheck/lint/format/boundary 44 files/test）；`test/platform-p3.test.ts` 16 tests（真机坐标抽取 balanced、待使用红包回归、短路零点击、极速支付危险控件）；`test/safety.test.ts` 覆盖极速支付。`test:coverage` src/price 行 **95.89%**。
+- **边界/未做**：冷启动全流程"首页→搜索→加购"逐页控件需继续按真机 dump 校准（混淆短 id + 中文输入）；已稳定可验收的是**结算页读数**（含短路零点击）。真实设备 dump 仅存 `.price-agent/`，入 git 的只有脱敏 fixture。
+- **更新后状态**：**P3 真机"结算页→读实付"PASS**；下一步 P3 冷启动全流程校准 + P4。
+
+### [32] 2026-10-24 15:00 · P3 冷启动全流程受阻：真机触发满页验证码（红线即停）+ 补真实代码路径拦截回归
+- **为什么**：目标要求真机跑通"搜索→选店→加购→结算→读实付"全流程。尝试从首页发起冷启动时，美团**首屏弹出"请按语序依次点击下图文字"的字序验证码**（IP/账号风控）。按 AGENTS.md §0 红线 2，**验证码必须立即停止、不得尝试识别/点击**，故本轮全流程实跑在验证码处**主动中止**，交人工处理。
+- **做了什么**：
+  1. 确认拦截正确：该验证码是**无字 WebView**（`layout_webview` + 仅有刷新图按钮），`classifyObstruction` 判为 `captcha`（`matched: textless-webview`）。
+  2. **补强回归（真实代码路径）**：新增 `test/platform-p3.test.ts` 用例——用假 Driver（只回验证码 dump）+ **真实 `createNavigator` + `runMeituanReal`**，断言抛 `NeedsHumanError` 且**零点击**（此前只测了 stub nav 的单步，未覆盖整条 `waitForAnyState`/`classifyObstruction` 真路径）。
+- **验证方式**：`pnpm check` **102/102 全绿**；新用例 `runMeituanReal (real code path): home captcha → NeedsHumanError, zero taps` 通过（taps===0）。
+- **未做/边界**：冷启动"首页→搜索→加购→结算"全流程实跑**被验证码阻断**，需用户本人手动通过验证后，才能继续校准首页/搜索/店铺页控件；"结算页→读实付"已在前一条 PASS。全程只读，未破解/未点击任何验证或支付控件。
+- **更新后状态**：P3「结算页读数」稳定；「冷启动全流程」待用户在真机手动过一次验证码后继续。
+
+### [33] 2026-10-24 15:37 · P3 冷启动全流程真机自动走通（首页→搜索→选店→加购→去结算→读实付）✅
+- **为什么**：承接 [32]——验证码清除后，把"冷启动全流程"用**插件真实代码路径**在真机上跑通并校准，这是 objective 的硬指标（不只是手动走到结算页读数）。
+- **真机实跑（关键证据）**：`createAdbDriver → meituan.enterSettlePage(driver, cond)` 从**首页**出发，**全自动**完成 首页→搜索"腐竹炒肉木桶饭"→选首店→选规格/加购→去结算→读实付，返回 `payable=19.9, balanced=true, confidence=high, needsConfirm=false, store=江西小炒(盛夏路店), item=腐竹炒肉木桶饭`（截图 `FINAL_coldstart_pass.png`：结算页右下"极速支付"、左下"¥19.9 共减¥10.98"）。全程只读，**未点任何提交/支付**。
+- **本次修的真机 bug（都是实跑暴露的）**：
+  1. **resource-id 短名后缀不匹配**：`state.hasResourceId` / `uixml.findBySelector` 原为**精确匹配**，而真机 id 是 `com.sankuai.meituan:id/search_layout_area`，选择器写短名 → 首页等待/点击全部失败。改为**后缀匹配**（`(?:[^"]*/)?name`）。
+  2. **首页搜索入口 ≠ 搜索页输入框**：首页是 `search_layout_area`（无 EditText），点它才进 SearchActivity 出现 `search_edit_text`。`runMeituanReal` 拆成 `searchEntry`→等搜索页→`searchInput`→提交。
+  3. **店铺页大图 banner 导致 dump 卡/陈旧**：`uiautomator` 无法 idle → 先下滚 1–2 屏越过 banner，再等店铺锚点；滚动后**改用文案点击**（坐标会失效）。
+  4. **结算页误判**：`共减` 在**店铺页购物车条**也出现（"到手约 ¥15.98 共减¥16"）→ 原 `settleTextAnchors` 含 `共减` 会把店铺页误判为结算页。移除 `共减`，改用强锚（券前/商品原价/外卖配送…）。
+  5. **实付取数变体 B**：神抢手/一口价店底部是「¥19.9 共减¥10.98」**无"券前"标签** → `payableFromRows` 增加"取『共减』左侧最近金额"兜底；并用"去结算→等结算页"重试 3 次解决偶发点不中。
+  6. **新增安全 `tapPoint`**：结果卡无 id/文案钩子，只能按坐标点；实现为**先解析该点命中节点、把其 text/desc/id 过 `assertTapSafe`（命中支付即拒）再点**（红线仍守住）。
+- **验证方式**：真机全自动跑通（上）；`pnpm check` **104/104 全绿**；`test/platform-p3.test.ts` 19 tests（含**真实 fixture 全流程回放** home→search→result→store→spec→cart→settle、`tapPoint` 命中"极速支付"被 `ForbiddenActionError` 拦且无 `input tap`、神抢手变体 balanced、验证码真实路径零点击）；新增脱敏真机 fixture 8 个（home/search/results/store/store-added/specsheet/settle/settle-shenqiand）。
+- **红线**：全程只读；`tapPoint` 命中"极速支付"即 `ForbiddenActionError`；验证码 `NeedsHumanError` 零点击。真实 dump 仅存 `.price-agent/`，入 git 只有**脱敏** fixture（手机号/地址/姓名已替换）。
+- **更新后状态**：**P3「搜索→选店→加购→结算→读实付」真机全流程 PASS**；objective 达成。
+
+### [34] 2026-10-24 15:44 · 真机调试省上下文：文本优先 + 证据检查脚本 + 清理调试截图
+- **为什么**：用户反馈"跑一个任务导致上下文不足"。根因是**调试期把整屏截图逐张 `read_image` 读入上下文**（1600×2560 的 PNG 每张 1–3MB，几张就占满），而插件本身**不**把图片塞进模型（`price_agent` 只返回文本比价表、截图仅落 `.price-agent/` 文件）。
+- **做了什么**：
+  1. 新增 `scripts/evidence-inspect.mjs`：把 uiautomator dump(XML) 解析成**紧凑文本+坐标**（`--settle` 只列金额行、`--clickable` 只列可点、`--filter kw…` 过滤），替代"读整屏图"来判页面/控件/金额。
+  2. `AGENTS.md` §2 增"**真机调试 · 省上下文（强制）**"规则：默认只用文本 dump；看图前先跑该脚本；只裁关键区或只读 1 张最终证据图；截图用完即清。
+  3. `README.md` 工具链表补该脚本说明。
+  4. 清理 `.price-agent/evidence/` 里 35MB 调试截图（仅保留 `FINAL_coldstart_pass.png`），占用降到 1.6MB。
+- **验证方式**：`node scripts/evidence-inspect.mjs test/fixtures/meituan-settle-shenqiand.real-device.xml --settle` 正确列出 `¥19.9 共减¥10.98 / 商品原价 / 用户配送费 / 商家代金券` 等；`pnpm check` 全绿（脚本随 lint/format 校验，`*.mjs` 走 Node 全局配置）。
+- **边界**：脚本零依赖、纯只读本地 XML；不改变插件工具契约（`price_agent` 仍只返回文本）。
+- **更新后状态**：真机调试默认走文本路径，显著降低上下文占用；后续任务不再因逐张读图而上下文不足。
+
 ---
 
 ---
@@ -402,4 +451,4 @@
 
 ---
 
-*最后更新：2026-10-24 14:22 +08:00*
+*最后更新：2026-10-24 15:44 +08:00*

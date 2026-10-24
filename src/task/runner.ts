@@ -118,6 +118,7 @@ export function draftFromFacts(
     fees: facts.fees,
     discounts: facts.discounts,
     payable: facts.payable,
+    optionalSavings: facts.optionalSavings,
     extraction: { confidence: facts.confidence, byField: facts.byField },
     evidence: {
       quoteId,
