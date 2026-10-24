@@ -627,6 +627,8 @@ async function tryReadSettle(
   const byOcr = extractElemeSettleFromOcr(result.words, cond, result.text)
   // 保留这张结算页截图作为证据（canvas 自绘没有控件树）；脱敏在 task 层统一处理。
   byOcr.screenshot = png
+  // 保留 OCR 逐词框（evidence.rawExtraction.ocrBoxes），便于人工复核金额定位。
+  byOcr.ocrWords = result.words
   return byOcr
 }
 

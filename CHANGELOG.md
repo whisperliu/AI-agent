@@ -478,11 +478,25 @@
   6. **配置**（`src/config.ts` + `cordis.patch.yml`）：`task.retryAttempts=2`、`evidence.retainDays=7`、`evidence.redact=true`（默认开）。
 - **验证方式**：
   - **真机截图脱敏实证**（只读，未点提交/支付）：对既有真机截图 `mt-s6.png`+`mt-s6.xml` 跑 `redactScreenshot` → `applied=true, masked=2`，放大对照图确认「益丰新村-9号楼」被**整块涂黑**；`1600×2560` 输出仍是合法 PNG。
-  - **离线**：`pnpm check` **149/149 全绿**；新增 `test/redact.test.ts`（9）、`test/retry.test.ts`（7）、`test/p5.test.ts`（7）；`test:coverage` `src/price` 行覆盖 **97.15%**（策略/证据 100%）。
+  - **离线**：`pnpm check` **152/152 全绿**；新增 `test/redact.test.ts`（9）、`test/retry.test.ts`（7）、`test/p5.test.ts`（7）；`test:coverage` `src/price` 行覆盖 **97.15%**（策略/证据 100%）。
   - 覆盖：PNG 编解码 round-trip、掩码、无法脱敏不落图、清理（按天/按量/目录不存在）、重试（瞬时重试成功/验证码不重试/超限抛错/取消即停）、证据绑定（dump+脱敏图/未脱敏不存/OCR 文本）。
 - **红线/隐私**：全程只读；脱敏失败**绝不保存原图**；截图仅落 `.price-agent/`（gitignore），入 git 只有脱敏 fixture；真机对照图验证完即删。
 - **边界**：脱敏是「按 dump 文本定位矩形填黑」，非像素级人脸/水印识别；dump 读不到的 canvas 区域（如饿了么自绘）若含 PII 无法据此定位——此时会因“无敏感区域”而不落图（隐私安全默认方向）。
 - **更新后状态**：**P5「隐私脱敏 / 证据清理 / 异常重试 / 验证码暂停」四项均有可判定落点**，`pnpm check` 全绿。
+
+---
+
+### [38] 2026-10-24 18:45 · P5 打磨（二）：失败取证也脱敏 + OCR 逐词框入证据 + 证据缺失兜底
+
+- **为什么**：上一轮只给「成功报价」的证据（`bindEvidence`）加了脱敏，但**失败取证路径**（`device/capture.captureEvidence`，断言超时/验证码时由 `steps.safeCapture` 调用）仍把**原图**直接落盘——这是隐私红线的真实缺口（失败现场恰恰最可能停留在含手机号/地址的页面）。另 `Evidence.rawExtraction.ocrBoxes` 字段一直存在却从未写入，OCR 结果无法按坐标复核。
+- **做了什么**：
+  1. **`capture.ts` 默认脱敏**：新增 `CaptureOptions{redact}`（默认 `true`）；截图先经 `redactScreenshot(png, dumpXml)`，成功才落盘并返回 `redaction:'applied'`，无法脱敏 → **不存原图**、`warning` 记原因。返回类型补 `redaction` 字段。`steps.StepOptions` 增 `evidenceRedact`（仅离线测试置 `false`）。
+  2. **OCR 逐词框入证据**：`RawQuoteFacts` 增 `ocrWords?`；`elemeReal` OCR 分支写入；`runner.draftFromFacts` 映射到 `evidence.rawExtraction.ocrBoxes`（`text/confidence/bbox`）。
+  3. **证据缺失兜底**：`bindEvidence` 末尾若完全无 dump/无脱敏图/无 OCR 文本，兜底写 `missingReason='证据缺失：无 dump / OCR 文本 / 截图，需人工复核'`（`price` 层据此降 `low` + `needsConfirm`）。
+- **验证方式**：`pnpm check` **152/152 全绿**；`test/p5.test.ts` 新增 3 例（OCR `ocrBoxes` 落证据、完全无证据 `missingReason` 兜底、`captureEvidence` 默认脱敏且不可脱敏不存图）；`test/device-p2.test.ts` 断言超时用例显式 `evidenceRedact:false`（测试用最小灰图无 PII）。`src/price` 行覆盖 97.15%。
+- **红线/隐私**：两条取证路径（成功/失败）现在都默认脱敏；测试从未把真机原图入库。
+- **边界**：真机本轮掉线（无线调试端口变更、mDNS 重连后再次离线），**未能在真机现场复跑** `captureEvidence`；脱敏算法本身已在上一轮用真机截图（`mt-s6`，`masked=2` 对照确认涂黑）验证，本轮改动只是把它接到失败取证路径 + 单测覆盖。
+- **更新后状态**：P5「截图默认脱敏」覆盖完整（成功证据 + 失败取证），OCR 证据可复核，证据缺失如实降级。
 
 ---
 
@@ -501,4 +515,4 @@
 
 ---
 
-*最后更新：2026-10-24 18:15 +08:00*
+*最后更新：2026-10-24 18:45 +08:00*

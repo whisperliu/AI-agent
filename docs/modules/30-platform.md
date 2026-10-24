@@ -78,6 +78,7 @@ interface PlatformStrategy {
   - `runElemeReal` 走 OCR：`tryReadSettle` 控件树优先，读不到实付且注入 `ctx.ocr` 时 → 截图 + `settlePanelRoi`（`tms_fragment_container` 右栏）→ `extractElemeSettleFromOcr`。`confidence` 永不 high，低置信/不平 → `needsConfirm`。
   - **真机实测**：payable=**¥20.8** 稳定读出（截图"立即支付 ¥20.8"）；一次 OCR 丢"打包费 ¥1"数字 → delta −1 → 如实 `low/needsConfirm`。
   - 导航（搜索/加购/去结算）在 canvas 下只靠 resourceId 锚点 + 坐标点按；**全自动逐页校准不如美团稳定**（canvas 无文案钩子），当前可稳定验收的是**已在结算页时的 OCR 读数**。
+- **OCR 逐词框留存（P5）**：`extractElemeSettleFromOcr` 返回 `ocrWords`（原始 `t/c/bbox`），`task/runner` 写入 `evidence.rawExtraction.ocrBoxes`，便于人工按坐标复核金额；截图（已脱敏）同时作为证据落盘。
 - **fixture**：`test/fixtures/eleme-settle.real-device.xml`（脱敏；30+3+1−5=29 balanced、`confidence=high`）。
 
 ## 测试

@@ -205,6 +205,11 @@ export function draftFromFacts(
         treeDumpPath: bound?.dumpPath,
         // 饿了么 canvas 自绘没有可读控件树，OCR 文本就是原始识别结果（§6.5）。
         ocrText: facts.byField.payable === 'ocr' ? facts.dump : undefined,
+        ocrBoxes: facts.ocrWords?.map((w) => ({
+          text: w.t,
+          confidence: w.c,
+          bbox: [w.bbox.x, w.bbox.y, w.bbox.w, w.bbox.h] as [number, number, number, number],
+        })),
       },
       screenshotPath: bound?.screenshotPath,
       capturedAt: new Date(now).toISOString(),
@@ -276,6 +281,11 @@ export async function bindEvidence(
   }
 
   if (gaps.length > 0) out.missingReason = gaps.join('；')
+  // 最终兜底：完全没有可复核证据（无 dump / 无脱敏图 / 无 OCR 文本）也要如实说明。
+  if (!out.dumpPath && !out.screenshotPath && !(facts.byField.payable === 'ocr' && facts.dump)) {
+    const w = '证据缺失：无 dump / OCR 文本 / 截图，需人工复核'
+    out.missingReason = out.missingReason ? `${out.missingReason}；${w}` : w
+  }
   return out
 }
 

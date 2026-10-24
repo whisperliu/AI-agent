@@ -3,7 +3,7 @@
  * 层：strategy。依赖 `price/model` 类型与 `device/driver` 接口，**不 import** 设备实现。
  */
 import type { Driver } from '../device/driver.ts'
-import type { Ocr } from '../ocr/reader.ts'
+import type { Ocr, OcrWord } from '../ocr/reader.ts'
 import type {
   ComparisonConditions,
   DiscountKind,
@@ -48,6 +48,8 @@ export interface RawQuoteFacts {
   byField: Record<string, 'tree' | 'ocr'>
   /** 原始 dump 文本（用于 evidence 留存）。 */
   dump: string
+  /** 原始 OCR 逐词结果（P5：留存到 evidence.rawExtraction.ocrBoxes，便于复核/定位）。 */
+  ocrWords?: OcrWord[]
   screenshot?: Uint8Array
 }
 

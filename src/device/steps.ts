@@ -20,6 +20,8 @@ export interface StepOptions {
   evidenceDir?: string
   /** 证据文件名前缀（如 quoteId / step 名）。 */
   evidenceName?: string
+  /** 失败取证截图是否脱敏（P5，默认 true；false 仅在离线测试用）。 */
+  evidenceRedact?: boolean
   /** 取消信号。 */
   signal?: AbortSignal
 }
@@ -160,5 +162,5 @@ async function safeCapture(
 ): Promise<{ dumpPath?: string; screenshotPath?: string }> {
   if (!opts.evidenceDir) return {}
   const name = `${opts.evidenceName ?? 'step'}-${suffix}-${Date.now()}`
-  return captureEvidence(driver, opts.evidenceDir, name)
+  return captureEvidence(driver, opts.evidenceDir, name, { redact: opts.evidenceRedact })
 }

@@ -511,7 +511,13 @@ test('waitForState: timeout writes dump evidence and throws StateAssertionError'
       await waitForState(
         driver,
         { presentResourceIds: ['com.sankuai.meituan:id/payable'] },
-        { timeoutMs: 60, pollMs: 10, evidenceDir: tmp, evidenceName: 'settle' },
+        {
+          timeoutMs: 60,
+          pollMs: 10,
+          evidenceDir: tmp,
+          evidenceName: 'settle',
+          evidenceRedact: false,
+        },
       )
     } catch (e) {
       err = e

@@ -15,7 +15,7 @@
 | `recover.ts` | 弹窗/授权/加载/登录/验证码拦截（§3.5.2） | `classifyObstruction/assertNoHumanRequired/recoverOnce/recoverySelector` |
 | `pageDetect.ts` | 页面识别（多信号融合，§3.5.4） | `detectPage(dump, contracts)`, `PageContract` |
 | `steps.ts` | **动作+断言+超时+恢复** 原语（§3.5.1） | `waitForState/tapAndExpect/inputAndExpect/swipeAndExpect` |
-| `capture.ts` | 失败取证：dump+截图落本地（原子写，脱敏） | `captureEvidence(driver, dir, name)` |
+| `capture.ts` | 失败取证：dump+截图落本地（原子写，**截图默认脱敏**；无法脱敏则不落图） | `captureEvidence(driver, dir, name, {redact})` → `{dumpPath, screenshotPath, redaction, warning}` |
 | `redact.ts` | **截图默认脱敏（P5）**：零依赖 PNG 解码/掩码/编码 + 敏感区域识别 | `redactScreenshot(png, dumpXml)`, `sensitiveTextRects`, `looksSensitive`, `decodePng/encodePng`, `maskRegions`, `parseBounds` |
 
 ```ts
@@ -52,8 +52,9 @@ interface Driver {
 
 - **零依赖**：只用 `node:zlib` 手写 PNG 编解码（8-bit、非隔行；灰度/RGB/灰度+A/RGBA；filter 0–4），**不引入 sharp/jimp**（依赖纪律 §2）。
 - **策略（隐私优先）**：从 dump XML 里找**手机号/门牌地址（数字+号/栋/楼…、路名+数字、小区/大厦…）/收件人/支付信息**节点，取其 `bounds`，把截图对应矩形**填黑**。
-- **无法脱敏 → 不落图**：解码失败或未定位到任何敏感区域时返回 `applied=false`，调用方（`task/runner.bindEvidence`）**绝不保存原图**。
+- **无法脱敏 → 不落图**：解码失败或未定位到任何敏感区域时返回 `applied=false`，调用方（`task/runner.bindEvidence`、`device/capture.captureEvidence`）**绝不保存原图**，只在 `missingReason`/`warning` 里说明。
 - **真机实测**：1600×2560 截图 ~130–190ms/张；对 `mt-s6` 脱敏 `masked=2`，对照图确认「益丰新村-9号楼」被整块涂黑。**误伤校准**：去掉单字“道/号”泛匹配，避免「味道赞」误判成地址。
+- **覆盖两条取证路径（P5 收口）**：① 成功报价的证据 `task/runner.bindEvidence`；② **失败取证** `device/capture.captureEvidence`（`steps.safeCapture` 调用，断言超时/验证码时留证）——两条都默认脱敏，`CaptureOptions.redact` 仅在离线测试置 `false`（测试用小灰图）。
 - **边界**：按 dump 文本定位矩形，非像素级人脸/水印识别；canvas 自绘区（dump 读不到）无法据此定位 → 会因“无敏感区域”不落图（安全默认方向）。
 
 ## 本模块必须遵守的共享规则（清单）

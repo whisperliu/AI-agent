@@ -11,6 +11,7 @@ import { cleanupEvidence, cleanupResults } from '../src/task/cleanup.ts'
 import { encodePng } from '../src/device/redact.ts'
 import { makeEnv } from './p1-env.ts'
 import type { RawQuoteFacts } from '../src/platform/types.ts'
+import type { Driver } from '../src/device/driver.ts'
 
 const DUMP = `<hierarchy>
   <node text="收货人 李四 13900000000" bounds="[0,0][120,20]" />
@@ -168,6 +169,91 @@ test('cleanupResults: deletes only expired result files', async () => {
     assert.equal(stats.kept, 1)
     await stat(fresh)
     await assert.rejects(() => stat(stale))
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('bindEvidence: OCR facts carry ocrBoxes into evidence (rawExtraction)', async () => {
+  const { draftFromFacts, bindEvidence } = await import('../src/task/runner.ts')
+  const env = await makeEnv()
+  try {
+    const plan = {
+      taskId: 't',
+      cond: {
+        snapshotId: 's',
+        item: '烤鸭饭',
+        qty: 1,
+        spec: [],
+        composition: [],
+        deliverTo: { city: '上海', lat: 1, lng: 1 },
+        fixedAt: '2026-10-22T12:00:00+08:00',
+        hash: 'h',
+      },
+      platforms: [],
+    }
+    const ocrFacts = facts({
+      byField: { payable: 'ocr' },
+      dump: '实付 19.9',
+      confidence: 'low',
+      ocrWords: [{ t: '实付', c: 0.9, bbox: { x: 10, y: 20, w: 30, h: 12 } }],
+    })
+    const bound = await bindEvidence(env.deps, ocrFacts, 'q-ocrbox')
+    const draft = draftFromFacts(ocrFacts, 'eleme', plan, env.deps, 'q-ocrbox', bound)
+    const boxes = draft.evidence.rawExtraction.ocrBoxes
+    assert.ok(boxes && boxes.length === 1)
+    assert.equal(boxes![0]!.text, '实付')
+    assert.deepEqual(boxes![0]!.bbox, [10, 20, 30, 12])
+  } finally {
+    await env.cleanup()
+  }
+})
+
+test('bindEvidence: no dump/screenshot/ocr → missingReason explains evidence gap', async () => {
+  const env = await makeEnv()
+  try {
+    const noEv = facts({ dump: '', byField: {} })
+    const bound = await bindEvidence(env.deps, noEv, 'q-empty')
+    assert.equal(bound.dumpPath, undefined)
+    assert.equal(bound.screenshotPath, undefined)
+    assert.match(bound.missingReason ?? '', /证据缺失/)
+  } finally {
+    await env.cleanup()
+  }
+})
+
+test('captureEvidence: redacts screenshot by default; unredactable file not saved', async () => {
+  const { captureEvidence } = await import('../src/device/capture.ts')
+  const dir = await mkdtemp(join(tmpdir(), 'cap-p5-'))
+  try {
+    const driver = {
+      async dump() {
+        return '<hierarchy><node text="收货人 王五 13700001111" bounds="[0,0][120,20]"/></node></hierarchy>'
+      },
+      async tap() {},
+      async input() {},
+      async swipe() {},
+      async screencap() {
+        return grayPng(200, 60)
+      },
+    } as unknown as Driver
+    const r = await captureEvidence(driver, dir, 'fail')
+    assert.equal(r.redaction, 'applied')
+    assert.ok(r.screenshotPath?.endsWith('.png'))
+
+    // 无敏感区域 → 不保存原图
+    const driver2 = {
+      ...driver,
+      async dump() {
+        return '<hierarchy><node text="实付 ¥9.9" bounds="[0,0][50,50]"/></hierarchy>'
+      },
+      async screencap() {
+        return grayPng(60, 60)
+      },
+    } as unknown as Driver
+    const r2 = await captureEvidence(driver2, dir, 'fail2')
+    assert.equal(r2.screenshotPath, undefined)
+    assert.match(r2.warning ?? '', /未落盘/)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
