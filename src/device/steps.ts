@@ -44,6 +44,18 @@ export async function waitForState(
   expect: StateAssertion,
   opts: StepOptions = {},
 ): Promise<string> {
+  return waitForAnyState(driver, [expect], opts)
+}
+
+/**
+ * 轮询直到**任一**断言满足（OR 语义，用于"页面 anchor 多选一"）。
+ * 与 `waitForState` 共用同一套干扰恢复 / 验证码拦截 / 失败取证逻辑，避免重复实现。
+ */
+export async function waitForAnyState(
+  driver: Driver,
+  alternatives: StateAssertion[],
+  opts: StepOptions = {},
+): Promise<string> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT
   const pollMs = opts.pollMs ?? DEFAULT_POLL
   const started = Date.now()
@@ -78,13 +90,18 @@ export async function waitForState(
       if (r.kind === 'login') throw new NeedsHumanError('login')
     }
 
-    try {
-      assertState(xml, expect)
-      return xml
-    } catch (err) {
-      lastErr = err
-      await sleep(pollMs)
+    let matched = false
+    for (const alt of alternatives) {
+      try {
+        assertState(xml, alt)
+        matched = true
+        break
+      } catch (err) {
+        lastErr = err
+      }
     }
+    if (matched) return xml
+    await sleep(pollMs)
   }
 
   const ev = await safeCapture(driver, opts, 'state-fail')

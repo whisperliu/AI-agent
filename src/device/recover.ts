@@ -9,7 +9,7 @@
  */
 import { NeedsHumanError } from '../core/errors.ts'
 import type { Driver, UiSelector } from './driver.ts'
-import { findBySelector, parseUiNodes, visibleTexts } from './uixml.ts'
+import { findBySelector, parseUiNodes, visibleTexts, type UiNode } from './uixml.ts'
 
 export type ObstructionKind =
   'none' | 'upgrade' | 'ad' | 'permission' | 'notification' | 'login' | 'loading' | 'captcha'
@@ -34,6 +34,32 @@ const CAPTCHA_HINTS = [
 ]
 
 const LOGIN_HINTS = ['登录', '手机号登录', '请先登录', '账号登录', 'sign in', 'log in']
+
+/**
+ * 真机实测（P3）：美团滑块验证是 **WebView canvas 渲染**，dump 里 **无 text / 无 content-desc**，
+ * 仅靠文案匹配会判成 `none` → 等于漏掉红线 2（验证码即停）。
+ * 因此补充"无字大 WebView 遮罩"的结构判据（保守，避免把普通无字加载壳误判为验证码）。
+ */
+const RESOURCE_ID_CAPTCHA_HINTS = ['captcha', 'verify', 'slider', 'nc_', 'geetest', 'aliyun']
+
+/** 无字大 WebView 遮罩（验证码 canvas 特征）：几乎无文本 + 有占据可观面积的 WebView + 无列表。 */
+function looksLikeTextlessCaptcha(nodes: UiNode[], texts: string[]): boolean {
+  const hasWebview = nodes.some((n) => (n.className ?? '').toLowerCase().includes('webview'))
+  if (!hasWebview) return false
+  if (texts.length > 2) return false
+  const hasListLike = nodes.some((n) => {
+    const cls = (n.className ?? '').toLowerCase()
+    return cls.includes('listview') || cls.includes('recyclerview')
+  })
+  if (hasListLike) return false
+  return nodes.some((n) => {
+    const cls = (n.className ?? '').toLowerCase()
+    if (!cls.includes('webview') || !n.bounds) return false
+    const [x1, y1, x2, y2] = n.bounds
+    return (x2 - x1) * (y2 - y1) >= 200_000
+  })
+}
+
 const UPGRADE_HINTS = ['立即更新', '以后再说', '版本升级', '新版本', '稍后再说']
 const AD_HINTS = ['跳过', '跳过广告', '广告']
 const PERMISSION_HINTS = ['是否允许', '允许', '定位', '位置信息']
@@ -59,8 +85,12 @@ export function classifyObstruction(dump: string): Obstruction {
   const resIds = nodes.map((n) => n.resourceId ?? '').join(' ')
 
   // 验证码/风控：最高优先级（红线段）。
-  const cap = anyHit(texts, CAPTCHA_HINTS) ?? matchIn(resIds, CAPTCHA_HINTS)
+  const cap = anyHit(texts, CAPTCHA_HINTS) ?? matchIn(resIds, RESOURCE_ID_CAPTCHA_HINTS)
   if (cap) return { kind: 'captcha', matched: cap }
+
+  // 无字 WebView 验证码（真机 canvas 滑块）：文案全空时靠结构判据兜底。
+  if (looksLikeTextlessCaptcha(nodes, texts))
+    return { kind: 'captcha', matched: 'textless-webview' }
 
   // 登录态：需人工。
   const login = anyHit(texts, LOGIN_HINTS)

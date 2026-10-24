@@ -34,7 +34,8 @@ interface Driver {
 - **截图二进制**：`shell screencap -p /sdcard/x.png` 落盘 → `adb pull` 到本地临时文件 → `readFile` 读字节（**不经 utf8**，否则 PNG 损坏）；校验 PNG 魔数。
 - **点击前强制过安全护栏**：`tap()` 内先 `assertTapSafe(sel)`（`core/safety.ts`，检查 resourceId/label/content-desc/**text**），命中下单/支付即抛 `ForbiddenActionError`。**这是红线 1 的落点。**
 - **每条 dump 后**可调 `ensureNoHumanRequired(dump)`：命中验证码/风控 → `NeedsHumanError('captcha')`；登录态 → `NeedsHumanError('login')`。**红线 2 的落点。**
-- `steps.ts`：杜绝盲等。动作后 `waitForState` 轮询 dump 断言；断言失败**先尝试弹窗恢复**（`recover.ts`），仍失败 → `captureEvidence` 截图+dump 留证并抛 `StateAssertionError{expected, dumpPath, screenshotPath}`。
+- `steps.ts`：杜绝盲等。动作后 `waitForState` 轮询 dump 断言；断言失败**先尝试弹窗恢复**（`recover.ts`），仍失败 → `captureEvidence` 截图+dump 留证并抛 `StateAssertionError{expected, dumpPath, screenshotPath}`。P3 增 `waitForAnyState`（**OR 语义**，页面 anchor 多选一），与 `waitForState` 共用同一套拦截/恢复/取证逻辑。
+- `recover.ts` **红线补强（P3 真机发现）**：美团滑块验证是 **WebView canvas 渲染，dump 无 text/content-desc**，纯文案匹配会漏判成 `none`。已补"无字大 WebView 遮罩"结构判据（`looksLikeTextlessCaptcha`）→ 识别为 `captcha` 并抛 `NeedsHumanError`，**仍绝不点击**。回归用例 `test/fixtures/captcha.textless-webview.xml`。
 - `probe.ts`：`analyzeDump` 输出 `treeRichness` 与 `recommend(tree|ocr|human)`，供降级决策（§3.5.4）；`adb.probe()` 采集机型/分辨率/DPI/前台包名 + dump 质量 + 截屏可用性。
 - `mock.ts` 与 `adb.ts` **实现同一 `Driver`**，切换 `device.driver` 不改上层（§2.1 R3）。
 - XML 解析用零依赖正则（`uixml.ts`）；P3 若需更强层级解析可换 `fast-xml-parser`（可选依赖）。

@@ -330,6 +330,23 @@
 - **未做/边界**：端口非固定——pad 重启或重开无线调试后 `44881` 会变，需同步更新 `device.serial`；插件对 `host:port` 已有 `ensureConnected` 自动 `adb connect` 重连一次（§8.3）；锁屏/休眠可能掉线。全程只读，未做任何点击/下单/支付。
 - **更新后状态**：**P2 §8.4 真机 PASS**；`device.driver=adb` 已在 GUI 生效；下一步 P3 单平台抓价（需按真机 dump 校准页面契约）。
 
+### [27] 2026-10-24 13:45 · P3 起步：美团真机抓价适配 + 修复无字验证码漏判
+- **为什么**：进入 P3「单平台抓价」，需按真机校准美团"搜索→选店→结算→读实付"链路，并落实两层校验 + 证据绑定。
+- **做了什么**：
+  1. **新增 `src/platform/meituanReal.ts`**：拆分"纯提取"与"真机流程"。
+     - `extractMeituanSettle(nodes, cond, dump)` 纯函数：按 `resource-id`（`fee_<kind>`/`discount_<kind>`/`payable`）优先、文案兜底（`配送费 ¥2.00`/`满30减5 -¥5.00`）抽取费用/优惠/实付；金额解析优先取 `¥` 前缀（修 "满30减5" 误取 30 的 bug）。
+     - `runMeituanReal(nav, cond)`：首页→搜索→选店→加购→购物车→读实付；每步 `waitAny` 复用 `device/steps.waitForAnyState`（验证码即停+弹窗恢复+超时取证）；**全程只读，绝不点提交订单/支付**。
+     - `createNavigator(driver)`：用 `Driver` 接口 + `steps` 原语成型，platform 层不 import 设备实现。
+  2. **新增 `src/platform/selectors/meituan.ts`**（`MEITUAN_SELECTORS` 候选集合，短名后缀匹配）与 `src/platform/pageContracts.ts`（`MEITUAN_PAGE_CONTRACTS`）。
+  3. **`src/platform/meituan.ts` 驱动解耦**：按驱动能力（有无 `probe`）自动选 mock 通路 / 真机通路，`task/runner` 不改。
+  4. **`src/device/steps.ts` 增 `waitForAnyState`**（OR 语义），`waitForState` 转调它，行为不变。
+  5. **红线修复（真机实测发现）**：`src/device/recover.ts` 的验证码识别原仅靠文案，美团滑块是**无字 WebView canvas**，会漏判成 `none`。已补结构判据 `looksLikeTextlessCaptcha`（大 WebView + 近零文本 + 无列表）→ 判 `captcha` 抛 `NeedsHumanError`，**仍绝不点击**。
+- **验证方式（离线，`pnpm check` 全绿）**：新增 `test/platform-p3.test.ts`（12 tests）+ 脱敏样本 `test/fixtures/captcha.textless-webview.xml`；**94 tests 全过**（原 82 + 12），typecheck/lint/format/boundary 全绿。覆盖：id 路径/文案回退抽取、`¥28.9 vs ¥289`、`满30减5` 金额、选店导航链路（stub）、**无字 WebView 滑块→NeedsHumanError 且零点击**、升级/定位/加载干扰分类、读不到实付→needsConfirm、危险控件识别。
+- **未做/边界**：**美团真机实测受阻**——真机首启触发**滑块验证**（红线禁止自动过），且平板已锁屏，需用户本人解锁并手动过一次验证后，再跑真机 `start` 用真实 dump 校准 `MEITUAN_SELECTORS`。`MEITUAN_SELECTORS` 当前为候选集合。
+- **更新后状态**：P3 代码骨架 + 离线验收就绪；真机 §P3 实跑待用户解锁续做。
+
+---
+
 ---
 
 ## 追加条目的模板（供后续每轮使用）
@@ -345,4 +362,4 @@
 
 ---
 
-*最后更新：2026-10-24 13:35 +08:00*
+*最后更新：2026-10-24 13:45 +08:00*

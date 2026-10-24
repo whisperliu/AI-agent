@@ -1,0 +1,18 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<!--
+  脱敏真机样本（P3）：美团滑块验证页。
+  来源：Lenovo TB321FU 真机 uiautomator dump（已裁剪为匿名结构）。
+  特征：**无 text / 无 content-desc**，只有一个巨大的 WebView（canvas 渲染的滑块验证）。
+  用途：回归红线 2 —— 纯文案匹配会漏判，必须靠结构判据识别为 captcha。
+-->
+<hierarchy rotation="0">
+  <node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="com.sankuai.meituan" content-desc="" clickable="false" bounds="[75,794][1525,1834]">
+    <node index="0" text="" resource-id="" class="android.view.View" package="com.sankuai.meituan" content-desc="" clickable="false" bounds="[75,814][1525,839]" />
+    <node index="1" text="" resource-id="" class="android.widget.FrameLayout" package="com.sankuai.meituan" content-desc="" clickable="false" bounds="[422,814][1177,1814]">
+      <node index="0" text="" resource-id="" class="android.widget.RelativeLayout" package="com.sankuai.meituan" content-desc="" clickable="false" bounds="[422,814][1177,1814]">
+        <node index="0" text="" resource-id="" class="android.webkit.WebView" package="com.sankuai.meituan" content-desc="" clickable="false" bounds="[422,814][1177,1814]" />
+      </node>
+    </node>
+    <node index="2" text="" resource-id="" class="android.widget.ImageView" package="com.sankuai.meituan" content-desc="" clickable="true" bounds="[1445,814][1505,874]" />
+  </node>
+</hierarchy>
