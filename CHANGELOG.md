@@ -525,6 +525,24 @@
 
 ---
 
+### [41] 2026-10-24 21:30 · fix(device): 真机全流程跑不通的 6 个根因（启动/回首页/陈旧 dump/窗口坐标/重试/锚点）
+
+- **为什么**：真机（联想 TB321FU 平板）端到端 `runCompare` 反复失败，报错五花八门（`tab_home` 超时 / `search_edit_text` 缺失 / 一次都不重试）。逐层排查后发现**不是单一 bug，而是 6 个叠加的真实缺陷**。
+- **做了什么**：
+  1. **从不启动 App**：`runMeituanReal/runElemeReal` 默认"App 已在前台"。新增 `Driver.launchApp/foreground` + `navigator.ensureAppForeground`，两平台 `enterSettlePage` 前置调用（等价点桌面图标，不做登录/授权/支付）。
+  2. **启动恢复到上次页面**：`monkey`/LAUNCHER intent 只把任务提到前台。`launchApp` 改为 `resolve-activity` + `am start -n <MainActivity>`，`force` 时追加 `-S`（force-stop 后启动，实测唯一能稳定回首页的方式）。
+  3. **回首页把 App 退到桌面**：`ensureHome` 盲目连按返回键（搜索页→首页→桌面）。改为每次回退**先查前台包名**，跑出 App 就重新拉起；最终兜底 force-stop 重启。
+  4. **dump 读到陈旧页面（最隐蔽）**：重页面标准 dump 报 `could not get idle state` 且**不覆盖旧文件**，直接 `cat` 会拿到上一页（实测：店铺页读到搜索结果页内容，导致后续锚点全错）。`dumpToFile` 改为「先 `rm` → 跑 dump → **校验输出含 `dumped to` 且无 `ERROR`** → 才 cat」，否则换 `--compressed`；`/dev/tty` 直出同样要求无 ERROR。
+  5. **等待一次都不重试**：真机单次 `uiautomator dump` 2.4–3.4s，而 `waitForAnyState` 的 `timeoutMs=1500` 比单帧还短 → 首帧慢就零重试。改为**保证至少 2 次** dump 尝试。
+  6. **首页锚点误判**：`homeAnchors` 含 `search_button`，而**搜索页也有同名 id** → 搜索页被误判成首页。已移除。
+- **附带新增（窗口几何 / 坐标校正）**：`probe.parseWindowGeometry/parseFocusToken/sliceWindowBlock/toScreenPoint`（纯函数）；`adb.geometry()` 读**聚焦窗口**的 `winConfig.mBounds`；`tap/tapPoint/swipe` 走坐标映射；`toScreenPoint` 依据 dump 边界**自动判定**坐标系（避免偏移两次）；`navigator.assertUsableWindow` 对分屏/多窗口抛 `NeedsHumanError('environment')` 并提示人工（**不自动改窗口布局**，避免误点）。
+- **验证方式**：`pnpm check` **161/161 全绿**；`test/device-p2.test.ts` 35 用例（新增：陈旧 dump 回归、mDNS 回连、daemon 预热、窗口几何解析、坐标映射自动判定、环境守卫）。
+- **未完成（如实记录）**：真机端到端**仍未跑通**——平板处于**PC/桌面模式**，美团被系统以浮窗打开，`appX` 在 641/1281 间漂移，`dump` 与 `input tap` 坐标系不一致。守卫会正确拦下并提示人工；彻底解决需用户把平板切回**全屏+竖屏**（详见 `docs/HANDOFF-device-p5.md`）。
+- **红线**：全程只读；未点任何提交/支付控件；未尝试破解验证码；未自动修改窗口布局。
+- **更新后状态**：真机链路的 6 个代码级缺陷已修复并回归覆盖；剩余为**设备环境**问题，已写成交接文档明日继续。
+
+---
+
 ---
 
 ## 追加条目的模板（供后续每轮使用）
@@ -540,4 +558,4 @@
 
 ---
 
-*最后更新：2026-10-24 19:05 +08:00*
+*最后更新：2026-10-24 21:30 +08:00*

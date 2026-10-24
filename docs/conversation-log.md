@@ -234,6 +234,15 @@
 - **追加修复**：真机首次动作常报"未检测到设备"——daemon 冷启动首帧 `adb devices` 为空。已在 `ensureConnected` 加**一次**预热等待（`mdns check`+3×500ms 轮询，注入 runner 时跳过）。真机验证 `probe`/`selfCheck` 正常（TB321FU/16/dump OK/截屏 1.3MB PNG）；`runCompare` 能正常启动，但本轮真机前台被**饿了么登录页**遮挡 + 美团搜索入口点击未跳转，故只验证到导航阶段，未做任何支付相关操作。
 
 
+### 轮次 26 · 追查「真机全流程跑不通」（2026-10-24 21:30，中断待续）⏸
+- **用户问题**："应对没有跑通的问题怎么处理？" → 逐层排查真机端到端失败原因。
+- **定位到 6 个真实 bug（均已修复，`5b579b3`）**：①流程从不启动 App；②启动恢复上次页面（改 `am start -n`，force 用 `-S`）；③ensureHome 连按返回退到桌面（改"先查前台包名"）；④**dump 读到陈旧页面**（标准 dump 失败不覆盖旧文件 → 先 rm + 校验 `dumped to`/无 ERROR）；⑤`waitForAnyState` 因单帧 dump 2.4–3.4s > 1500ms 而零重试（改至少 2 次）；⑥`homeAnchors` 含 `search_button` 与搜索页同名 → 误判首页。
+- **附带新增**：窗口几何解析（聚焦窗口 `winConfig.mBounds`）、坐标映射自动判定（窗口内 vs 屏幕坐标，防二次偏移）、`assertUsableWindow` 分屏守卫（`NeedsHumanError('environment')`）。
+- **验证**：`pnpm check` 161/161 全绿；device-p2 35 用例。
+- **卡点（非代码）**：平板处于 **PC/桌面模式**，美团以浮窗打开、`appX` 在 641/1281 漂移，dump 与 input 坐标系不一致 → 端到端仍失败。守卫正确拦下并提示人工。
+- **交接**：已写 `docs/HANDOFF-device-p5.md`（含复跑脚本、环境恢复步骤、明日待办与验收标准）。
+
+
 ---
 
 ## 附录 A · 机器可读元数据（JSON）
@@ -278,6 +287,7 @@
     {"n":23,"at":"10-24 18:15","user":"进行下一步","intent":"P5 打磨(一) 隐私/清理/重试/证据绑定","result":"新增 device/redact.ts(零依赖PNG脱敏)、task/cleanup.ts(TTL+保留上限)、core/retry.ts(瞬时重试,红线不重试);runner.bindEvidence 真实绑定 dump+脱敏图/ocrText;平台补截图;启动+完成清理;getResult 证据降级提示;config/patch 增 retryAttempts/retainDays/redact","verify":"真机 mt-s6 脱敏 masked=2 对照确认涂黑;pnpm check 149/149;src/price 覆盖 97.15%;新增 redact/retry/p5 共 22 tests","status":"ok(P5 一阶段完成)"},
     {"n":24,"at":"10-24 18:45","user":"继续","intent":"P5 打磨(二) 失败取证脱敏/OCR框/证据缺失兜底","result":"capture.ts 默认脱敏(不可脱敏不落图,返回redaction/warning);steps.evidenceRedact(仅测试关);RawQuoteFacts.ocrWords→evidence.rawExtraction.ocrBoxes;bindEvidence 无证据兜底 missingReason","verify":"pnpm check 152/152;test/p5 +3 例;device-p2 断言超时改 evidenceRedact:false;真机本轮掉线未复跑(算法上轮 mt-s6 已验证)","status":"ok(P5 二阶段完成)"},
     {"n":25,"at":"10-24 18:55","user":"继续(打磨)","intent":"P5 打磨(三) 无线调试 mDNS 自动发现/回连","result":"adb.ts 重连候选:配置host:port→mDNS串号→adb mdns services 当前端口;真机旧:44881 自动切到 mDNS 串号;captureEvidence 落 dump+脱敏图","verify":"真机 probe TB321FU/16/canScreenshot+脱敏PNG;device-p2 +2(28 tests);pnpm check 全绿","status":"ok(P5 三阶段完成)"},
+    {"n":26,"at":"10-24 21:30","user":"应对没有跑通的问题怎么处理？/ 先中断，收尾，记录检测到哪里了，明天继续","intent":"追查真机端到端跑不通的根因 + 交接","result":"定位并修复 6 个真机 bug(启动App/回首页/dump陈旧/重试/首页锚点/坐标)+新增窗口几何与坐标映射与分屏守卫;卡点为平板 PC/桌面模式浮窗 appX 漂移(环境问题,守卫正确拦截);写 docs/HANDOFF-device-p5.md 交接","verify":"pnpm check 161/161;device-p2 35 用例;真机仍未跑通(如实记录)","status":"paused(待用户切回全屏竖屏后复测)"},
   ],
   "fixes": [
     {"topic":"job owner","file":"src/core/jobs-adapter.ts","detail":"owner=exec.agent.id 贯通"},
@@ -306,4 +316,4 @@
 
 ---
 
-*会话快照：2026-10-24 18:55 · 分支 `main`；**P0–P5 完成**。里程碑：**P2 真机 §8.4 PASS（Lenovo TB321FU / Android 16）**；**P3 美团真机全流程 PASS**（payable=19.9 balanced、confidence=high）；**P4 多平台 + 策略四态 + 谨慎互斥 + 统一输入快照分组**（DoD①②③④ 均落地）；**P4 真机复测** 饿了么 canvas 自绘 → ROI OCR，真机 payable=¥20.8；**P5 打磨（一/二/三）**：`device/redact.ts` 零依赖 PNG 截图脱敏（真机 mt-s6 `masked=2` 对照确认涂黑、无法脱敏则不落图）、`task/cleanup.ts` 证据/结果 TTL+保留上限清理、`core/retry.ts` 瞬时重试（**验证码/支付绝不重试**）、`runner.bindEvidence` 证据真实绑定（dump+脱敏图+OCR 逐词框）、`device/capture.ts` 失败取证同样默认脱敏、`device/adb.ts` 无线调试 mDNS 自动发现/回连（修旧 host:port 失效）。门禁 `pnpm check` **154/154 全绿**、`src/price` 行覆盖 **97.15%**。安全红线全程未触碰（无下单/支付路径、验证码即停零点击、仓内仅脱敏 fixture）。*
+*会话快照：2026-10-24 21:30 · 分支 `main`；**P0–P5 完成**。里程碑：**P2 真机 §8.4 PASS（Lenovo TB321FU / Android 16）**；**P3 美团真机全流程 PASS**（payable=19.9 balanced、confidence=high）；**P4 多平台 + 策略四态 + 谨慎互斥 + 统一输入快照分组**（DoD①②③④ 均落地）；**P4 真机复测** 饿了么 canvas 自绘 → ROI OCR，真机 payable=¥20.8；**P5 打磨（一/二/三）**：`device/redact.ts` 零依赖 PNG 截图脱敏（真机 mt-s6 `masked=2` 对照确认涂黑、无法脱敏则不落图）、`task/cleanup.ts` 证据/结果 TTL+保留上限清理、`core/retry.ts` 瞬时重试（**验证码/支付绝不重试**）、`runner.bindEvidence` 证据真实绑定（dump+脱敏图+OCR 逐词框）、`device/capture.ts` 失败取证同样默认脱敏、`device/adb.ts` 无线调试 mDNS 自动发现/回连（修旧 host:port 失效）。门禁 `pnpm check` **154/154 全绿**、`src/price` 行覆盖 **97.15%**。安全红线全程未触碰（无下单/支付路径、验证码即停零点击、仓内仅脱敏 fixture）。*
