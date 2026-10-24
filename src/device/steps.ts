@@ -63,8 +63,13 @@ export async function waitForAnyState(
   const started = Date.now()
   let last = ''
   let lastErr: unknown
+  let attempts = 0
 
-  while (Date.now() - started < timeoutMs) {
+  // 真机实测：单次 `uiautomator dump` 需要 2.4–3.4s，**可能比 timeoutMs 本身还长**。
+  // 若只用 `elapsed < timeoutMs` 作循环条件，首帧 dump 慢一点就一次都不重试（App 刚启动首屏未渲染 → 误判失败）。
+  // 因此保证**至少 2 次** dump 尝试（慢帧也算一次有效证据），再叠加超时条件。
+  while (attempts < 2 || Date.now() - started < timeoutMs) {
+    attempts++
     ensureNotAborted(opts.signal)
     let xml: string
     try {

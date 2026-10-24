@@ -17,7 +17,17 @@ import type { Driver, UiSelector } from './driver.ts'
 import { assertNoHumanRequired } from './recover.ts'
 import { centerOf, findBySelector, nodesAtPoint, parseUiNodes, pickNodeAtPoint } from './uixml.ts'
 import type { DeviceProbe } from './probe.ts'
-import { analyzeDump, isValidPng, parseForeground, parseWmSize } from './probe.ts'
+import {
+  analyzeDump,
+  isValidPng,
+  parseFocusToken,
+  parseForeground,
+  parseWmSize,
+  parseWindowGeometry,
+  sliceWindowBlock,
+  toScreenPoint,
+} from './probe.ts'
+import type { WindowGeometry } from './probe.ts'
 
 export interface AdbExecResult {
   code: number
@@ -63,6 +73,8 @@ export interface AdbDriver extends Driver {
   ensureConnected(signal?: AbortSignal): Promise<void>
   /** 能力探测（§3.5.4）。 */
   probe(signal?: AbortSignal): Promise<DeviceProbe>
+  /** 窗口几何（坐标映射/分屏判定用，P5）。 */
+  geometry(signal?: AbortSignal): Promise<WindowGeometry | undefined>
 }
 
 const DEFAULT_ADB = 'adb'
@@ -127,6 +139,9 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
   let mdnsSerial: string | undefined
   /** 是否已做过一次"等 daemon 发现无线设备"的预热。 */
   let warmupDone = false
+  /** 缓存的窗口几何（P5）：dump bounds 是窗口内坐标，input 需要屏幕坐标，必须加偏移。 */
+  let geometryCache: WindowGeometry | undefined
+  let geometryAt = 0
 
   /** 执行 `adb <argv>`（自动前置 `-s <serial>`，全局命令除外）。 */
   async function adb(argv: string[], signal?: AbortSignal): Promise<AdbExecResult> {
@@ -289,26 +304,52 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
     }
   }
 
+  /**
+   * 落盘式 dump（**必须防陈旧**）：重页面（店铺页/结果页）标准 dump 会报
+   * `could not get idle state` 且**不覆盖**目标文件 —— 若直接 cat，会读到上一次的旧页面
+   * （真机踩坑：店铺页读到搜索结果页内容，导致后续锚点全部误判）。
+   * 因此：① 先删目标文件 ② 跑 dump ③ **校验命令真的成功**（输出含 `dumped to` 且无 ERROR）
+   * ④ 才 cat。任一不满足 → 返回 undefined，交由上层换压缩模式/重试。
+   */
+  async function dumpToFile(
+    remote: string,
+    compressed: boolean,
+    signal?: AbortSignal,
+  ): Promise<string | undefined> {
+    await adb(['shell', 'rm', '-f', remote], signal).catch(() => undefined)
+    const args = ['shell', 'uiautomator', 'dump']
+    if (compressed) args.push('--compressed')
+    args.push(remote)
+    const r = await adb(args, signal)
+    const out = `${r.stdout}\n${r.stderr}`
+    const ok =
+      /dumped to/i.test(out) && !/could not get idle state|could not get idle|ERROR/i.test(out)
+    if (!ok) return undefined
+    const c = await adb(['exec-out', 'cat', remote], signal)
+    return c.stdout.includes('<hierarchy') ? c.stdout : undefined
+  }
+
   async function dumpOnce(signal?: AbortSignal): Promise<string> {
-    // 1) 直出 /dev/tty
+    // 1) 标准落盘 dump
+    const std = await dumpToFile('/sdcard/window_dump.xml', false, signal)
+    if (std) return std
+    // 2) 兜底 --compressed（重页面标准 dump 被系统 Killed / 拿不到 idle）
+    const comp = await dumpToFile('/sdcard/window_dump_c.xml', true, signal)
+    if (comp) return comp
+    // 3) 最后试 /dev/tty 直出（同样要求无 ERROR，避免误采陈旧输出）
     try {
       const r = await adb(['exec-out', 'uiautomator', 'dump', '/dev/tty'], signal)
-      if (r.code === 0 && r.stdout.includes('<hierarchy')) return r.stdout
+      const out = `${r.stdout}\n${r.stderr}`
+      if (
+        !/could not get idle state|could not get idle|ERROR/i.test(out) &&
+        r.stdout.includes('<hierarchy')
+      ) {
+        return r.stdout
+      }
     } catch {
       /* fallthrough */
     }
-    // 2) 落盘标准 dump 再 cat
-    const remote = '/sdcard/window_dump.xml'
-    const d = await adb(['shell', 'uiautomator', 'dump', remote], signal)
-    const c = await adb(['exec-out', 'cat', remote], signal)
-    if (c.stdout.includes('<hierarchy')) return c.stdout
-    // 3) 兜底 --compressed（重页面标准 dump 会被系统 Killed）
-    const remoteC = '/sdcard/window_dump_c.xml'
-    const dc = await adb(['shell', 'uiautomator', 'dump', '--compressed', remoteC], signal)
-    const cc = await adb(['exec-out', 'cat', remoteC], signal)
-    if (cc.stdout.includes('<hierarchy')) return cc.stdout
-    const err = (dc.stderr || d.stderr || '').trim()
-    throw new Error(`uiautomator dump 输出不含 hierarchy（可能被系统限制）：${err}`)
+    throw new Error('uiautomator dump 失败（标准与 --compressed 均未取得新鲜 hierarchy）')
   }
 
   async function dump(signal?: AbortSignal): Promise<string> {
@@ -326,6 +367,53 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
     throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
   }
 
+  /**
+   * 读取并缓存窗口几何（10s 有效）：用于把 dump 的窗口内坐标换算成屏幕坐标。
+   * 拿不到就返回 undefined（按无偏移处理，保持旧行为）。
+   */
+  async function geometry(signal?: AbortSignal): Promise<WindowGeometry | undefined> {
+    if (geometryCache && Date.now() - geometryAt < 10_000) return geometryCache
+    // 屏幕真实尺寸：display 的 mBounds（注意 `wm size` 报的是物理值，横屏时方向不一致，不可用）。
+    const disp = await adb(['shell', 'dumpsys', 'window', 'displays'], signal)
+    // 聚焦窗口段：只有它能给出"dump 属于哪个窗口"的权威 bounds。
+    const win = await adb(['shell', 'dumpsys', 'window'], signal)
+    const token = parseFocusToken(win.stdout)
+    let block: string | undefined
+    if (token) {
+      const all = await adb(['shell', 'dumpsys', 'window', 'windows'], signal)
+      block = sliceWindowBlock(all.stdout, token)
+    }
+    const geo = block ? parseWindowGeometry(disp.stdout, block) : undefined
+    if (geo) {
+      geometryCache = geo
+      geometryAt = Date.now()
+    }
+    return geo
+  }
+
+  /** dump 坐标 → 屏幕坐标（无几何信息时原样返回；坐标系统自动判定）。 */
+  async function screenPoint(
+    x: number,
+    y: number,
+    extent?: { maxRight?: number; maxBottom?: number },
+    signal?: AbortSignal,
+  ) {
+    const geo = await geometry(signal)
+    return geo ? toScreenPoint(geo, x, y, extent) : { x: Math.round(x), y: Math.round(y) }
+  }
+
+  /** 从节点集算 dump 坐标系的边界（判定"窗口内坐标 / 屏幕坐标"用）。 */
+  function dumpExtent(nodes: { bounds?: [number, number, number, number] }[]) {
+    let maxRight = 0
+    let maxBottom = 0
+    for (const n of nodes) {
+      if (!n.bounds) continue
+      if (n.bounds[2] > maxRight) maxRight = n.bounds[2]
+      if (n.bounds[3] > maxBottom) maxBottom = n.bounds[3]
+    }
+    return { maxRight, maxBottom }
+  }
+
   async function tap(sel: UiSelector, signal?: AbortSignal): Promise<void> {
     // 红线 1：点击前强制安全护栏（命中下单/支付即抛 ForbiddenActionError）。
     assertTapSafe(sel)
@@ -334,7 +422,8 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
     if (!node?.bounds) {
       throw new StateAssertionError(`tap 目标未找到或无 bounds: ${JSON.stringify(sel)}`)
     }
-    const { x, y } = centerOf(node.bounds)
+    const c = centerOf(node.bounds)
+    const { x, y } = await screenPoint(c.x, c.y, dumpExtent(parseUiNodes(xml)), signal)
     const r = await adb(['shell', 'input', 'tap', String(x), String(y)], signal)
     if (r.code !== 0) throw new Error(`input tap 失败：${r.stderr.trim()}`)
   }
@@ -356,11 +445,75 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
       }
       void hay
     }
+    const sp = await screenPoint(x, y, dumpExtent(nodes), signal)
+    const r = await adb(['shell', 'input', 'tap', String(sp.x), String(sp.y)], signal)
+    if (r.code !== 0) throw new Error(`input tap 失败：${r.stderr.trim()}`)
+  }
+
+  /**
+   * 把 App 拉到前台（等价用户点桌面图标；只启动，不做登录/授权/支付）。
+   * 先试 LAUNCHER intent；失败退回 monkey。启动后短等，让首屏稳定。
+   */
+  async function launchApp(
+    appId: string,
+    opts: { force?: boolean } = {},
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await ensureConnected(signal)
+    // **优先按组件启动 launcher Activity**：`monkey`/LAUNCHER intent 只是把 App 现有任务提到前台，
+    // 会**恢复到上次页面**（真机踩坑：停在搜索页 → 等首页必然超时）。`am start -n <MainActivity>`
+    // 才会真正进入首页。
     const r = await adb(
-      ['shell', 'input', 'tap', String(Math.round(x)), String(Math.round(y))],
+      [
+        'shell',
+        'cmd',
+        'package',
+        'resolve-activity',
+        '--brief',
+        '-c',
+        'android.intent.category.LAUNCHER',
+        appId,
+      ],
       signal,
     )
-    if (r.code !== 0) throw new Error(`input tap 失败：${r.stderr.trim()}`)
+    const component = r.stdout
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.includes('/'))
+      .pop()
+    let started = false
+    if (component) {
+      // `-S` = 先 force-stop 再启动：真机实测这是唯一**稳定回到首页**的方式
+      // （普通 start 只会把 App 现有任务提到前台，仍停在上次的搜索页/店铺页）。
+      const argv = ['shell', 'am', 'start']
+      if (opts.force) argv.push('-S')
+      argv.push('-n', component)
+      const s2 = await adb(argv, signal)
+      started = s2.code === 0 && !/Error/i.test(`${s2.stdout}${s2.stderr}`)
+    }
+    if (!started) {
+      // 兜底：monkey LAUNCHER（可能恢复到上次页面，后续 ensureHome 会再校正）。
+      const m = await adb(
+        ['shell', 'monkey', '-p', appId, '-c', 'android.intent.category.LAUNCHER', '1'],
+        signal,
+      )
+      const out = `${m.stdout}${m.stderr}`
+      if (m.code !== 0 || /No activities found|monkey aborted|Error/i.test(out)) {
+        throw new Error(`启动 App 失败（${appId}）：${out.trim() || '未找到可启动的 Activity'}`)
+      }
+    }
+    await sleep(1500)
+  }
+
+  /** 系统返回键（KEYCODE_BACK=4）：仅用于导航回退。 */
+  async function back(signal?: AbortSignal): Promise<void> {
+    await adb(['shell', 'input', 'keyevent', '4'], signal)
+  }
+
+  /** 当前前台包名（读 dumpsys window 的 mCurrentFocus / mFocusedApp）。 */
+  async function foreground(signal?: AbortSignal): Promise<string | undefined> {
+    const r = await adb(['shell', 'dumpsys', 'window'], signal)
+    return parseForeground(r.stdout)
   }
 
   async function input(sel: UiSelector, text: string, signal?: AbortSignal): Promise<void> {
@@ -391,10 +544,15 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
   }
 
   async function swipe(dir: 'up' | 'down', signal?: AbortSignal): Promise<void> {
-    const { w, h } = await screenSize(signal)
-    const cx = Math.round(w / 2)
-    const top = Math.round(h * 0.3)
-    const bottom = Math.round(h * 0.7)
+    // 用**窗口几何**而不是 wm size：letterbox 下必须只在 App 窗口内滑动，否则滑到黑边无效。
+    const geo = await geometry(signal)
+    const bx = geo ? geo.appX : 0
+    const by = geo ? geo.appY : 0
+    const w = geo ? geo.appW : (await screenSize(signal)).w
+    const h = geo ? geo.appH : (await screenSize(signal)).h
+    const cx = Math.round(bx + w / 2)
+    const top = Math.round(by + h * 0.3)
+    const bottom = Math.round(by + h * 0.7)
     const [y1, y2] = dir === 'up' ? [bottom, top] : [top, bottom]
     const r = await adb(
       ['shell', 'input', 'swipe', String(cx), String(y1), String(cx), String(y2), '300'],
@@ -456,6 +614,7 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
       canScreenshot,
       model: await getprop('ro.product.model', signal),
       androidVersion: await getprop('ro.build.version.release', signal),
+      geometry: await geometry(signal),
     }
   }
 
@@ -471,6 +630,10 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
     input,
     swipe,
     screencap,
+    launchApp,
+    foreground,
+    back,
+    geometry,
   }
 }
 

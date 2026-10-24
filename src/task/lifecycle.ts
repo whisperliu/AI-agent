@@ -472,7 +472,10 @@ export async function cleanupSweep(deps: Deps): Promise<void> {
 
 function classifyError(err: unknown): { reason: TaskFailureReason; message: string } {
   if (err instanceof NeedsHumanError)
-    return { reason: 'needs_human', message: `需要人工介入：${err.reason}` }
+    return {
+      reason: 'needs_human',
+      message: `需要人工介入：${err.reason}${err.hint ? `（${err.hint}）` : ''}`,
+    }
   if (err instanceof StateAssertionError)
     return { reason: 'state', message: `页面状态断言失败：${err.expected}` }
   if (err instanceof BusyError) return { reason: 'busy', message: `设备忙：${err.resource}` }

@@ -49,7 +49,8 @@ export interface MeituanSelectors {
 
 export const MEITUAN_SELECTORS: MeituanSelectors = {
   // 真机实测（TB321FU, 美团 2026-10）：首页搜索区为 search_layout_area / search_button。
-  homeAnchors: ['search_layout_area', 'search_button', 'tab_home', 'homepage_search'],
+  // ⚠️ 不能含 `search_button`：搜索页也有同名 id → 会把搜索页误判成首页（真机实测踩坑）。
+  homeAnchors: ['search_layout_area', 'homepage_search', 'tab_home'],
   // 首页点搜索入口 → SearchActivity；搜索页才有 search_edit_text。
   searchEntry: ['search_layout_area', 'homepage_search', 'search_button'],
   searchInput: ['search_edit_text', 'search_edit', 'search_input'],

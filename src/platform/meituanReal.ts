@@ -17,6 +17,7 @@ import type { ComparisonConditions, DiscountKind, FeeKind, OptionalSaving } from
 import { itemScore } from '../price/similarity.ts'
 import { MEITUAN_SELECTORS } from './selectors/meituan.ts'
 import type { Navigator } from './navigator.ts'
+import { ensureHome } from './navigator.ts'
 import {
   amountFromRow,
   amountLeftOfAnchor,
@@ -455,8 +456,8 @@ export async function runMeituanReal(
     // 不在结算页 → 走完整导航（下一段）。
   }
 
-  // 1) 等首页就绪。
-  await nav.waitAny(byId(MEITUAN_SELECTORS.homeAnchors), '首页')
+  // 1) 等首页就绪（App 可能恢复到上次的搜索页/店铺页 → 先回退到首页）。
+  await ensureHome(nav, byId(MEITUAN_SELECTORS.homeAnchors), { appId: 'com.sankuai.meituan' })
 
   // 2) 搜索：点**首页搜索入口**（search_layout_area）→ 等搜索页 → 输入 → 提交。
   await nav.tap({ resourceId: MEITUAN_SELECTORS.searchEntry[0]! }, '搜索入口')

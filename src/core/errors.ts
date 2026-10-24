@@ -30,13 +30,20 @@ export class StateAssertionError extends Error {
   }
 }
 
-/** 需要人工介入（登录 / 验证码 / 风控）→ 任务必须暂停，禁止自动绕过（AGENTS.md §0 红线 2） */
+/**
+ * 需要人工介入 → 任务必须暂停，禁止自动绕过（AGENTS.md §0 红线 2）。
+ * `environment` 表示**设备状态不适合自动化**（如分屏/自由窗口/横屏 letterbox），
+ * 也无法安全自动纠正（改窗口布局属于模拟用户操作，且极易点错），故一律交人工。
+ */
 export class NeedsHumanError extends Error {
   override readonly name = 'NeedsHumanError'
-  readonly reason: 'login' | 'captcha' | 'risk-control'
-  constructor(reason: 'login' | 'captcha' | 'risk-control') {
+  readonly reason: 'login' | 'captcha' | 'risk-control' | 'environment'
+  /** 给用户看的具体处置建议（可选）。 */
+  readonly hint?: string
+  constructor(reason: 'login' | 'captcha' | 'risk-control' | 'environment', hint?: string) {
     super(`needs human intervention: ${reason}`)
     this.reason = reason
+    this.hint = hint
   }
 }
 

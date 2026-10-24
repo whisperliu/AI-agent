@@ -309,7 +309,12 @@ test('adb driver: falls back to --compressed dump when standard dump is empty (r
       return { code: 0, stdout: 'List of devices attached\n192.168.1.8:5555\tdevice\n', stderr: '' }
     if (head === 'exec-out' && a[1] === 'uiautomator')
       return { code: 0, stdout: 'Killed\n', stderr: '' }
-    if (head === 'shell' && a[1] === 'uiautomator') return { code: 0, stdout: 'dumped', stderr: '' }
+    if (head === 'shell' && a[1] === 'uiautomator') {
+      // 标准 dump 报拿不到 idle；--compressed 成功（真机重页面实测）。
+      if (a.includes('--compressed'))
+        return { code: 0, stdout: 'UI hierchary dumped to: /sdcard/window_dump_c.xml', stderr: '' }
+      return { code: 0, stdout: 'ERROR: could not get idle state.', stderr: '' }
+    }
     if (head === 'exec-out' && a[1] === 'cat') {
       // 标准落盘为空；--compressed 落盘有效
       const target = a[2] ?? ''
@@ -644,4 +649,168 @@ test('adb driver: discovers current mDNS port when configured host:port is dead 
   const d = createAdbDriver({ serial: '192.168.3.44:44881', runner })
   await d.ensureConnected()
   assert.equal(d.serial, '192.168.3.44:37289')
+})
+
+test('adb driver: stale dump file is NOT trusted when dump reports could not get idle (P5 regression)', async () => {
+  // 真机踩坑：店铺页标准 dump 失败时**不覆盖**旧文件，直接 cat 会读到上一页（搜索结果），
+  // 导致后续锚点全部误判。必须校验命令成功且先删旧文件；失败则走 --compressed。
+  const state: FakeAdbState = {
+    devices: [{ serial: '192.168.1.8:5555', state: 'device' }],
+    calls: [],
+    dumpXml: settleXml,
+  }
+  const runner: AdbRunner = async (argv) => {
+    state.calls.push(argv)
+    let a = argv.slice()
+    if (a[0] === '-s') a = a.slice(2)
+    const head = a[0]
+    if (head === 'devices')
+      return { code: 0, stdout: 'List of devices attached\n192.168.1.8:5555\tdevice\n', stderr: '' }
+    if (head === 'shell' && a[1] === 'rm') return { code: 0, stdout: '', stderr: '' }
+    if (head === 'shell' && a[1] === 'uiautomator') {
+      if (a.includes('--compressed'))
+        return { code: 0, stdout: 'UI hierchary dumped to: /sdcard/window_dump_c.xml', stderr: '' }
+      return { code: 0, stdout: '', stderr: 'ERROR: could not get idle state.' }
+    }
+    if (head === 'exec-out' && a[1] === 'cat') {
+      const target = a[2] ?? ''
+      // 关键：标准文件里残留**上一页**的旧内容（含 OLD_PAGE 标记）
+      if (target.includes('window_dump.xml'))
+        return { code: 0, stdout: '<hierarchy><node text="OLD_PAGE"/></hierarchy>', stderr: '' }
+      return { code: 0, stdout: settleXml, stderr: '' }
+    }
+    return { code: 0, stdout: '', stderr: '' }
+  }
+  const d = createAdbDriver({ serial: '192.168.1.8:5555', runner })
+  const xml = await d.dump()
+  assert.ok(!xml.includes('OLD_PAGE'), 'must not return stale previous-page dump')
+  assert.ok(xml.includes('<hierarchy'))
+  // 必须真的先删了旧文件（防陈旧的第一道保险）
+  assert.ok(
+    state.calls.some((c) => c.includes('rm')),
+    'should rm stale dump before dumping',
+  )
+})
+
+// ── P5: 窗口几何 / 坐标映射 / 分屏守卫 ──────────────────────────
+test('parseWindowGeometry: floating/split window uses focused window mBounds (PC mode)', async () => {
+  const { parseWindowGeometry, parseFocusToken, sliceWindowBlock } =
+    await import('../src/device/probe.ts')
+  const displays = 'winConfig={ mBounds=Rect(0, 0 - 2560, 1600) }'
+  const windowDump = 'mCurrentFocus=Window{d3d2a47 u0 com.sankuai.meituan/com.yoda.activity.Yoda}'
+  const windows = [
+    '  Window #42 Window{aaaaaaa u0 com.other}',
+    '    mFullConfiguration={winConfig={ mBounds=Rect(0, 0 - 800, 600) }}',
+    '  Window #43 Window{d3d2a47 u0 com.sankuai.meituan/com.yoda.activity.Yoda}:',
+    '    mFullConfiguration={1.0 ... winConfig={ mBounds=Rect(1281, 0 - 2560, 1600) ... mWindowingMode=multi-window ... }}',
+    '  Window #44 Window{bbbbbbb u0 com.sankuai.meituan/SearchActivity}:',
+    '    mFullConfiguration={1.0 ... winConfig={ mBounds=Rect(0, 0 - 1279, 1600) ...}}',
+  ].join('\n')
+  const token = parseFocusToken(windowDump)
+  assert.equal(token, 'd3d2a47')
+  const block = sliceWindowBlock(windows, token!)
+  assert.ok(block && block.includes('mBounds=Rect(1281, 0 - 2560, 1600)'))
+  const geo = parseWindowGeometry(displays, block!)
+  assert.ok(geo)
+  assert.equal(geo!.appX, 1281)
+  assert.equal(geo!.appW, 1279)
+  assert.equal(geo!.multiWindow, true)
+})
+
+test('parseWindowGeometry: fullscreen single window → multiWindow false', async () => {
+  const { parseWindowGeometry } = await import('../src/device/probe.ts')
+  const displays = 'winConfig={ mBounds=Rect(0, 0 - 2560, 1600) }'
+  const block =
+    'mFullConfiguration={winConfig={ mBounds=Rect(0, 0 - 2560, 1600) mWindowingMode=fullscreen }}'
+  const geo = parseWindowGeometry(displays, block)
+  assert.ok(geo)
+  assert.equal(geo!.multiWindow, false)
+  assert.equal(geo!.appX, 0)
+})
+
+test('parseWindowGeometry: letterbox (portrait app on landscape screen) flagged, not multiWindow', async () => {
+  const { parseWindowGeometry } = await import('../src/device/probe.ts')
+  const displays = 'winConfig={ mBounds=Rect(0, 0 - 2560, 1600) }'
+  const block =
+    'mFullConfiguration={winConfig={ mBounds=Rect(641, 0 - 1920, 1600) mWindowingMode=fullscreen mAreBoundsLetterboxed=true }}'
+  const geo = parseWindowGeometry(displays, block)
+  assert.ok(geo)
+  assert.equal(geo!.appX, 641)
+  assert.equal(geo!.multiWindow, false)
+  assert.equal(geo!.letterboxed, true)
+})
+
+test('toScreenPoint: window-local dump coords get window offset', async () => {
+  const { toScreenPoint } = await import('../src/device/probe.ts')
+  const geo = {
+    screenW: 2560,
+    screenH: 1600,
+    appX: 641,
+    appY: 0,
+    appW: 1279,
+    appH: 1600,
+    multiWindow: false,
+    letterboxed: true,
+  }
+  // dump 只有窗口内坐标（上限 ~1279）→ 必须加偏移，点 (1281,231) 才命中。
+  assert.deepEqual(toScreenPoint(geo, 640, 231, { maxRight: 1251, maxBottom: 1600 }), {
+    x: 1281,
+    y: 231,
+  })
+})
+
+test('toScreenPoint: already-screen-space dump coords are NOT offset twice', async () => {
+  const { toScreenPoint } = await import('../src/device/probe.ts')
+  const geo = {
+    screenW: 2560,
+    screenH: 1600,
+    appX: 1281,
+    appY: 0,
+    appW: 1279,
+    appH: 1600,
+    multiWindow: true,
+    letterboxed: false,
+  }
+  // 真机踩坑：dump 已是屏幕坐标（bounds 上限 1251+1281=2532）→ 原样返回。
+  assert.deepEqual(toScreenPoint(geo, 1921, 231, { maxRight: 2532, maxBottom: 1600 }), {
+    x: 1921,
+    y: 231,
+  })
+})
+
+test('assertUsableWindow: split-screen → NeedsHumanError(environment); fullscreen passes', async () => {
+  const { assertUsableWindow } = await import('../src/platform/navigator.ts')
+  const split = {
+    geometry: async () => ({
+      screenW: 2560,
+      screenH: 1600,
+      appX: 1281,
+      appY: 0,
+      appW: 1279,
+      appH: 1600,
+      multiWindow: true,
+    }),
+  } as unknown as Driver
+  await assert.rejects(
+    () => assertUsableWindow(split),
+    (e: unknown) => {
+      assert.ok(e instanceof NeedsHumanError)
+      assert.equal((e as NeedsHumanError).reason, 'environment')
+      return true
+    },
+  )
+  const ok = {
+    geometry: async () => ({
+      screenW: 1600,
+      screenH: 2560,
+      appX: 0,
+      appY: 0,
+      appW: 1600,
+      appH: 2560,
+      multiWindow: false,
+    }),
+  } as unknown as Driver
+  await assertUsableWindow(ok) // 不抛
+  // Mock（无 geometry 能力）→ 跳过
+  await assertUsableWindow({} as unknown as Driver)
 })

@@ -19,6 +19,7 @@ import type { OcrWord } from '../ocr/reader.ts'
 import { itemScore } from '../price/similarity.ts'
 import { ELEME_SELECTORS } from './selectors/eleme.ts'
 import type { Navigator } from './navigator.ts'
+import { ensureHome } from './navigator.ts'
 import {
   amountFromRow,
   amountLeftOfAnchor,
@@ -543,7 +544,7 @@ export async function runElemeReal(
   if (already) return already
 
   // 导航（饿了么为 canvas 自绘，按 resourceId 锚点 + 坐标点击；文案锚点在 dump 里通常不存在）。
-  await nav.waitAny(byId(ELEME_SELECTORS.homeAnchors), '首页')
+  await ensureHome(nav, byId(ELEME_SELECTORS.homeAnchors), { appId: 'me.ele' })
   await nav.tap({ resourceId: ELEME_SELECTORS.searchEntry[0]! }, '搜索入口')
   await nav.waitAny(byId([ELEME_SELECTORS.searchInput[0]!]), '搜索页')
   await nav.input({ resourceId: ELEME_SELECTORS.searchInput[0]! }, cond.item, '搜索输入')

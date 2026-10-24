@@ -30,6 +30,19 @@ export interface Driver {
   /** 截屏，返回 PNG 字节。 */
   screencap(): Promise<Uint8Array>
   /**
+   * 把目标 App 拉到前台（等价"用户点桌面图标"；**不做任何登录/授权/支付操作**）。
+   * `force=true` 时先 force-stop 再启动（用于"App 恢复到上次页面且退不出去"时**强制回首页**）。
+   * Mock 可不实现（上层跳过）。
+   */
+  launchApp?(appId: string, opts?: { force?: boolean }): Promise<void>
+  /**
+   * 当前前台包名（用于判断"是不是我们的 App 在前台"，失败返回 undefined）。
+   * Mock 可不实现。
+   */
+  foreground?(): Promise<string | undefined>
+  /** 按一次系统返回键（仅用于**回到首页**等导航，绝不用于关闭支付/确认框）。Mock 可不实现。 */
+  back?(): Promise<void>
+  /**
    * 能力探测（可选）：真机驱动实现；Mock 驱动可不实现（上层据 undefined 提示"仅真机可用"）。
    * 返回结构见 device/probe.ts 的 `DeviceProbe`；此处用宽松类型避免循环依赖。
    */

@@ -11,6 +11,7 @@ import type { ComparisonConditions } from '../price/model.ts'
 import type { Driver } from '../device/driver.ts'
 import { enterViaOpenTag, SETTLE_ANCHOR } from './extract.ts'
 import { createNavigator, runMeituanReal } from './meituanReal.ts'
+import { assertUsableWindow, ensureAppForeground } from './navigator.ts'
 import { GENERIC_SETTLE_SELECTORS } from './selectors/generic.ts'
 import type { PlatformStrategy, RawQuoteFacts } from './types.ts'
 
@@ -25,6 +26,10 @@ export const meituan: PlatformStrategy = {
   selectors: GENERIC_SETTLE_SELECTORS,
   async enterSettlePage(driver: Driver, cond: ComparisonConditions): Promise<RawQuoteFacts> {
     if (isRealDevice(driver)) {
+      // 前置：窗口必须是全屏竖屏（分屏/letterbox 下坐标会错位，明确拒绝并提示人工）。
+      await assertUsableWindow(driver)
+      // 关键：先把美团拉到前台（此前缺失 → 前台是别的 App/桌面时必然超时）。
+      await ensureAppForeground(driver, 'com.sankuai.meituan')
       return runMeituanReal(createNavigator(driver), cond)
     }
     return enterViaOpenTag(driver, 'meituan', cond)
