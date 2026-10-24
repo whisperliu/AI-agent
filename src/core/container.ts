@@ -133,6 +133,7 @@ export function buildCapabilities(
           adbPath: config.device.adbPath,
           autoReconnect: config.device.autoReconnect,
           unicodeIme: config.device.unicodeIme || undefined,
+          disableAnimations: config.device.disableAnimations,
           stepTimeoutMs: config.task.stepTimeoutMs,
         })
       : createMockDriver({ settlePages: MOCK_SETTLE_PAGES })

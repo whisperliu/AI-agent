@@ -228,6 +228,37 @@ function fakeAdbRunner(state: FakeAdbState): AdbRunner {
   }
 }
 
+test('adb driver: disables animations on connect and retries dump on idle failure', async () => {
+  const calls: string[][] = []
+  let dumpAttempts = 0
+  const runner: AdbRunner = async (argv) => {
+    calls.push(argv)
+    let a = argv.slice()
+    if (a[0] === '-s') a = a.slice(2)
+    if (a[0] === 'devices')
+      return { code: 0, stdout: 'List of devices attached\n1.1.1.1:5555\tdevice\n', stderr: '' }
+    // 前两次 dump 报 could not get idle（模拟动画），第三次成功
+    if (a[0] === 'exec-out' && a[1] === 'uiautomator') {
+      dumpAttempts++
+      return dumpAttempts >= 3
+        ? { code: 0, stdout: settleXml, stderr: '' }
+        : { code: 1, stdout: '', stderr: 'ERROR: could not get idle state.' }
+    }
+    if (a[0] === 'shell' && a[1] === 'uiautomator')
+      return { code: 1, stdout: '', stderr: 'ERROR: could not get idle state.' }
+    if (a[0] === 'exec-out' && a[1] === 'cat') return { code: 0, stdout: '', stderr: '' }
+    return { code: 0, stdout: '', stderr: '' }
+  }
+  const d = createAdbDriver({ serial: '1.1.1.1:5555', runner })
+  const xml = await d.dump()
+  assert.ok(xml.includes('<hierarchy'))
+  // 连接后应关闭三项动画
+  const flat = calls.map((c) => c.join(' '))
+  assert.ok(flat.some((c) => c.includes('settings put global window_animation_scale 0')))
+  assert.ok(flat.some((c) => c.includes('animator_duration_scale 0')))
+  assert.ok(dumpAttempts >= 3, 'should retry dump until idle succeeds')
+})
+
 test('adb driver: unicode input temporarily switches IME, broadcasts text, then restores IME', async () => {
   const calls: string[][] = []
   const runner: AdbRunner = async (argv) => {

@@ -47,6 +47,12 @@ export interface AdbDriverOptions {
    * 解决 `input text 中文` 在第三方输入法下 NPE/不落框的问题。缺省则走 `input text`。
    */
   unicodeIme?: string
+  /**
+   * 连接后把系统动画三项 scale 置 0（默认 true）。真机实测：持续动画会让
+   * `uiautomator dump` 反复报 `could not get idle state`，导致任何页面都读不到。
+   * 关闭动画后 dump 立即稳定（测试自动化惯例，不涉及任何风控绕过）。
+   */
+  disableAnimations?: boolean
 }
 
 /** `Driver` + P2 额外能力（连接管理 / 能力探测）。 */
@@ -98,6 +104,8 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
   const run = opts.runner ?? defaultRunner(adbPath)
   const autoReconnect = opts.autoReconnect ?? true
   const unicodeIme = opts.unicodeIme
+  const disableAnimations = opts.disableAnimations ?? true
+  let animationsDisabled = false
   const tmpDir = opts.tmpDir ?? join(tmpdir(), 'price-agent-adb')
   const allowAuto = opts.serial === 'auto' || opts.serial === ''
   const GLOBAL_CMDS = new Set([
@@ -136,11 +144,15 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
   async function ensureConnected(signal?: AbortSignal): Promise<void> {
     const devices = await listDevices(signal)
     if (resolvedSerial) {
-      if (devices.some((x) => x.serial === resolvedSerial && x.state === 'device')) return
+      if (devices.some((x) => x.serial === resolvedSerial && x.state === 'device')) {
+        await maybeDisableAnimations(signal)
+        return
+      }
     } else {
       const online = devices.filter((d) => d.state === 'device')
       if (online.length === 1) {
         resolvedSerial = online[0]!.serial
+        await maybeDisableAnimations(signal)
         return
       }
       if (online.length > 1) {
@@ -171,27 +183,57 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
     )
   }
 
-  async function dump(signal?: AbortSignal): Promise<string> {
-    await ensureConnected(signal)
-    // 1) 直出到 /dev/tty（低开销，多数页面可用）。
-    const r = await adb(['exec-out', 'uiautomator', 'dump', '/dev/tty'], signal)
-    if (r.code === 0 && r.stdout.includes('<hierarchy')) return r.stdout
+  async function maybeDisableAnimations(signal?: AbortSignal): Promise<void> {
+    if (!disableAnimations || animationsDisabled) return
+    animationsDisabled = true
+    for (const k of [
+      'window_animation_scale',
+      'transition_animation_scale',
+      'animator_duration_scale',
+    ]) {
+      try {
+        await adb(['shell', 'settings', 'put', 'global', k, '0'], signal)
+      } catch {
+        // 忽略：部分设备/权限下可能失败，不影响 dump 重试兜底。
+      }
+    }
+  }
 
-    // 2) 落盘标准 dump 再 cat。
+  async function dumpOnce(signal?: AbortSignal): Promise<string> {
+    // 1) 直出 /dev/tty
+    try {
+      const r = await adb(['exec-out', 'uiautomator', 'dump', '/dev/tty'], signal)
+      if (r.code === 0 && r.stdout.includes('<hierarchy')) return r.stdout
+    } catch {
+      /* fallthrough */
+    }
+    // 2) 落盘标准 dump 再 cat
     const remote = '/sdcard/window_dump.xml'
     const d = await adb(['shell', 'uiautomator', 'dump', remote], signal)
     const c = await adb(['exec-out', 'cat', remote], signal)
     if (c.stdout.includes('<hierarchy')) return c.stdout
-
-    // 3) 兜底 --compressed：真机重页面（如美团搜索结果）标准 dump 进程会被系统 Killed，
-    //    落盘 0 字节；--compressed 体积更小、可稳定产出（属性保留 resource-id/text/bounds/clickable）。
+    // 3) 兜底 --compressed（重页面标准 dump 会被系统 Killed）
     const remoteC = '/sdcard/window_dump_c.xml'
     const dc = await adb(['shell', 'uiautomator', 'dump', '--compressed', remoteC], signal)
     const cc = await adb(['exec-out', 'cat', remoteC], signal)
     if (cc.stdout.includes('<hierarchy')) return cc.stdout
-
-    const err = (dc.stderr || d.stderr || r.stderr || '').trim()
+    const err = (dc.stderr || d.stderr || '').trim()
     throw new Error(`uiautomator dump 输出不含 hierarchy（可能被系统限制）：${err}`)
+  }
+
+  async function dump(signal?: AbortSignal): Promise<string> {
+    await ensureConnected(signal)
+    // 真机 dump 会因页面持续动画报 `could not get idle state`；重试数次通常可成功（实测第 3 次）。
+    let lastErr: unknown
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        return await dumpOnce(signal)
+      } catch (err) {
+        lastErr = err
+        await new Promise((r) => setTimeout(r, 500))
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
   }
 
   async function tap(sel: UiSelector, signal?: AbortSignal): Promise<void> {

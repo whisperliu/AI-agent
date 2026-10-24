@@ -18,6 +18,8 @@ export const Config = z.object({
       autoReconnect: z.boolean().default(true),
       /** Unicode 输入辅助 IME（中文输入用；如 ADBKeyboard 的 com.android.adbkeyboard/.AdbIME）。空=不用。 */
       unicodeIme: z.string().default(''),
+      /** 连接后关闭系统动画（默认 true）：避免 `uiautomator dump` 持续动画导致 idle 失败。 */
+      disableAnimations: z.boolean().default(true),
     })
     .default({ driver: 'mock', serial: 'auto', adbPath: 'adb', autoReconnect: true }),
   task: z
