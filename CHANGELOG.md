@@ -478,7 +478,7 @@
   6. **配置**（`src/config.ts` + `cordis.patch.yml`）：`task.retryAttempts=2`、`evidence.retainDays=7`、`evidence.redact=true`（默认开）。
 - **验证方式**：
   - **真机截图脱敏实证**（只读，未点提交/支付）：对既有真机截图 `mt-s6.png`+`mt-s6.xml` 跑 `redactScreenshot` → `applied=true, masked=2`，放大对照图确认「益丰新村-9号楼」被**整块涂黑**；`1600×2560` 输出仍是合法 PNG。
-  - **离线**：`pnpm check` **148/148 全绿**；新增 `test/redact.test.ts`（9）、`test/retry.test.ts`（7）、`test/p5.test.ts`（6）；`test:coverage` `src/price` 行覆盖 **97.15%**（策略/证据 100%）。
+  - **离线**：`pnpm check` **149/149 全绿**；新增 `test/redact.test.ts`（9）、`test/retry.test.ts`（7）、`test/p5.test.ts`（7）；`test:coverage` `src/price` 行覆盖 **97.15%**（策略/证据 100%）。
   - 覆盖：PNG 编解码 round-trip、掩码、无法脱敏不落图、清理（按天/按量/目录不存在）、重试（瞬时重试成功/验证码不重试/超限抛错/取消即停）、证据绑定（dump+脱敏图/未脱敏不存/OCR 文本）。
 - **红线/隐私**：全程只读；脱敏失败**绝不保存原图**；截图仅落 `.price-agent/`（gitignore），入 git 只有脱敏 fixture；真机对照图验证完即删。
 - **边界**：脱敏是「按 dump 文本定位矩形填黑」，非像素级人脸/水印识别；dump 读不到的 canvas 区域（如饿了么自绘）若含 PII 无法据此定位——此时会因“无敏感区域”而不落图（隐私安全默认方向）。

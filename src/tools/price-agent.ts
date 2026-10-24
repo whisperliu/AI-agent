@@ -155,7 +155,9 @@ function formatGetResult(r: GetResultReply): string {
     const err = r.error ? `（${r.error.reason}: ${r.error.message}）` : ''
     return `任务 ${r.taskId}：status=${r.status}${err}`
   }
-  return formatCompareResult(r.result)
+  const table = formatCompareResult(r.result)
+  // 证据降级说明（P5）：如截图已被本地留存策略清理，提示需重新核价。
+  return r.note ? `${table}\n· ${r.note}` : table
 }
 
 /** 分组比价表（纯函数）。 */

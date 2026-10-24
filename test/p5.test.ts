@@ -174,3 +174,33 @@ test('cleanupResults: deletes only expired result files', async () => {
 })
 
 void mkdir
+
+test('formatGetResult: appends evidence-degradation note after the table', async () => {
+  const { formatReply } = await import('../src/tools/price-agent.ts')
+  const text = formatReply({
+    action: 'getResult',
+    reply: {
+      taskId: 't1',
+      status: 'completed',
+      note: '1 条报价的截图证据已清理（本地留存策略），如需复核请重新核价',
+      result: {
+        taskId: 't1',
+        query: {
+          snapshotId: 's',
+          item: '烤鸭饭',
+          qty: 1,
+          spec: [],
+          composition: [],
+          deliverTo: { city: '上海', lat: 1, lng: 1 },
+          fixedAt: '2026-10-22T12:00:00+08:00',
+          hash: 'h',
+        },
+        groups: [],
+        cheapest: null,
+        note: [],
+      },
+    },
+  })
+  assert.match(text, /比价结果/)
+  assert.match(text, /截图证据已清理/)
+})
