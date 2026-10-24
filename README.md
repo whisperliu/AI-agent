@@ -8,7 +8,15 @@ DSH 插件：在你自己的 Android 手机上打开外卖 App（美团 / 饿了
 
 ## 状态
 
-**P0+P1 完成（Mock 全链路可跑）+ P2 真机通道代码完成**（adb 驱动/连接重连/能力探测/弹窗恢复/截图留证/只读演练脚本），下一步 P3 单平台抓价。真机门槛（§8.4 最小实验）需在本机连手机后判定。文档：总纲 [PLAN.md](./PLAN.md) · 模块规范 [docs/module-spec.md](./docs/module-spec.md) · **每模块说明 [docs/modules/](./docs/modules/README.md)** · 任务与验收 [docs/tasks.md](./docs/tasks.md) · 决策 [docs/decisions.md](./docs/decisions.md) · 变更 [CHANGELOG.md](./CHANGELOG.md)。
+**P0–P5 完成**：纯核心 + 插件骨架/异步任务/Mock 全链路（P0/P1）→ 真机通道（P2）→ 美团真机全流程抓价（P3）→ 多平台（饿了么）+ 策略四态 + 谨慎互斥 + 统一输入快照分组（P4）→ **P5 打磨**（截图默认脱敏、证据 TTL/保留清理、瞬时异常重试、证据真实绑定、无线调试 mDNS 自动回连）。`pnpm check` 全绿（154 tests，`src/price` 行覆盖 97.15%）。
+
+文档：总纲 [PLAN.md](./PLAN.md) · 模块规范 [docs/module-spec.md](./docs/module-spec.md) · **每模块说明 [docs/modules/](./docs/modules/README.md)** · 任务与验收 [docs/tasks.md](./docs/tasks.md) · 决策 [docs/decisions.md](./docs/decisions.md) · 变更 [CHANGELOG.md](./CHANGELOG.md)。
+
+### 隐私与证据（P5）
+
+- 截图**默认脱敏**（零依赖 PNG 掩码：手机号/门牌/收件人/支付信息填黑）；**无法脱敏则不落图**。
+- 证据只存本地 `.price-agent/`（gitignore），按 `evidence.ttlMinutes` + `retainDays/retainMax` 清理。
+- 抓价遇到**验证码/登录/风控立即停止**（`NeedsHumanError`），**瞬时故障才重试**；下单/支付控件永不触碰、永不重试。
 
 ## P2 真机快速上手（只读、不会下单/支付）
 
@@ -64,7 +72,7 @@ test/             node --test 单测 + fixtures
 | 代码检查 | `pnpm lint` / `pnpm lint:fix` | ESLint 10 flat config + typescript-eslint 8 |
 | 格式化 | `pnpm format` / `pnpm format:check` | Prettier 3 |
 | 测试 | `pnpm test` / `pnpm test:watch` | 内置 `node --test`（不引 jest/vitest） |
-| 全量门禁 | `pnpm check` | typecheck → lint → format:check → test |
+| 全量门禁 | `pnpm check` | typecheck → lint → format:check → boundary → test |
 | 证据文本检查 | `node scripts/evidence-inspect.mjs <dump.xml> [--settle\|--clickable] [--filter kw…]` | 把真机 dump 解析成**紧凑文本+坐标**，避免逐张读整屏 PNG 吃满上下文（见 AGENTS.md §2「真机调试省上下文」） |
 
 ### 开发环境注意（本机沙箱）
