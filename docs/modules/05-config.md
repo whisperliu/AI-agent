@@ -24,9 +24,11 @@ export type ConfigInput = Infer<typeof Config>
 | `evidence.retainMax` | natural | 50 | 证据保留上限 |
 | `ocr.enabled` | boolean | false | P1 仅 MockOcr |
 | `platforms.<id>.enabled/appId/priceToleranceYuan` | — | — | 平台开关与勾稽容差（§5.1/§6.3） |
+| `platforms.<id>.strategies[]` | 数组 | `[]` | **平台级优惠策略（P4，§5.1）**：`id/kind/name/condition{minSpend,weekday}/discount{type,amount,cap}/autoApplied/quota{dailyLimit,monthlyLimit,totalQuota,lastUsedAt}/exclusiveGroup/crossPlatformExclusive`。语义见 §5.4–§5.6：配置最多产出 `presumed`（不假断言可用），`autoApplied=true` 即 `alreadyIncludedInPayable`；跨平台默认不互斥 |
 
 ## 实现要点
 - 校验失败要**点名到字段**（schemastery 原生报错即可），不吞异常。
+- **schemastery 无 `.optional()/.nullable()`**（实测）：可选字段直接用裸 schema（缺省即无值），可空字段用 `z.union([z.number(), z.const(null)]).default(null)`。
 - 敏感信息（卡号等）**不得**进配置；只存卡种/权益（§10）。
 - 平台策略的复杂结构（strategies/quota）在 P1 扩展时补进 `platforms.<id>`，**不要**塞进 `task/device`。
 

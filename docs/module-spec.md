@@ -596,6 +596,8 @@ interface Quote {
     availabilityReason?: string;
     sourceOfTruth: 'settle_screenshot' | 'local_ledger' | 'platform_config' | 'none';
   })[];
+  snapshotId?: string;           // ★ 派生来源统一输入快照 id（§6.6，P4）
+  snapshotHash?: string;         // ★ 派生来源快照 hash；compare 校验与 query.hash 一致，不一致即不可比
 
   evidence: Evidence;            // 见 ④
 }

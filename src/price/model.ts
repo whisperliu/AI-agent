@@ -121,6 +121,12 @@ export interface Quote {
   needsConfirm?: boolean
   deviatedConditions?: string[]
   optionalSavings?: OptionalSaving[]
+  /**
+   * 派生来源的统一输入快照（§6.6）：记录该 Quote 来自哪个 snapshotId/hash。
+   * 所有平台必须从**同一**快照派生，比对时据此校验一致性。
+   */
+  snapshotId?: string
+  snapshotHash?: string
   evidence: Evidence
 }
 
@@ -302,6 +308,9 @@ export interface QuoteDraft {
   payable: number
   optionalSavings?: OptionalSaving[]
   deviatedConditions?: string[]
+  /** 派生来源统一输入快照（§6.6）：由 runner 从 ComparisonConditions 透传，写入 Quote。 */
+  snapshotId?: string
+  snapshotHash?: string
   /** 调用方（OCR 质量门/控件树）给出的识别可信度 */
   extraction: Extraction
   evidence: EvidenceDraft

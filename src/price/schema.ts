@@ -174,6 +174,8 @@ export const QuoteSchema = z
     needsConfirm: z.boolean().optional(),
     deviatedConditions: z.array(z.string()).optional(),
     optionalSavings: z.array(OptionalSavingSchema).optional(),
+    snapshotId: z.string().optional(),
+    snapshotHash: z.string().optional(),
     evidence: EvidenceSchema,
   })
   .superRefine((q, ctx) => {

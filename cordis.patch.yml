@@ -29,7 +29,35 @@
             enabled: true
             appId: com.sankuai.meituan
             priceToleranceYuan: 1.0
+            # 平台级优惠策略（§5.1）：只有结算页实时实证(verified)且未含在实付才扣 effectivePrice。
+            strategies:
+              - id: meituan-shenquan
+                kind: membership
+                name: 美团神券 满30减5
+                condition: { minSpend: 30 }
+                discount: { type: fixed, amount: 5 }
+                autoApplied: true # 结算页默认已抵扣 → alreadyIncludedInPayable=true
+                crossPlatformExclusive: false
+              - id: cmb-wednesday
+                kind: credit_card
+                name: 招商银行 周三满50减10
+                condition: { minSpend: 50, weekday: wednesday }
+                discount: { type: fixed, amount: 10 }
+                autoApplied: false # 需切卡，未验证不计入主价
+                quota: { dailyLimit: 1, monthlyLimit: 4, totalQuota: null, lastUsedAt: null }
+                exclusiveGroup: meituan-pay-activity
+                crossPlatformExclusive: false # 同卡跨平台默认不互斥（§5.6）
           eleme:
             enabled: true
             appId: me.ele
             priceToleranceYuan: 1.0
+            strategies:
+              - id: eleme-cmb-wednesday
+                kind: credit_card
+                name: 招商银行 周三满50减10
+                condition: { minSpend: 50, weekday: wednesday }
+                discount: { type: fixed, amount: 10 }
+                autoApplied: false
+                quota: { dailyLimit: 1, monthlyLimit: 4, totalQuota: null, lastUsedAt: null }
+                exclusiveGroup: eleme-pay-activity
+                crossPlatformExclusive: false

@@ -51,11 +51,115 @@ export const Config = z.object({
         enabled: z.boolean().default(false),
         appId: z.string(),
         priceToleranceYuan: z.number().default(1.0),
+        /**
+         * 平台级优惠策略（§5.1）。用于把"配置里已知的优惠"按四态评估（§5.4/§5.5）：
+         * 只有 `verified`（结算页实时实证）且未含在实付里才扣 effectivePrice；
+         * 其余最多作 `presumed` 参考提示，**绝不**据额度/配置断言"可用"。
+         */
+        strategies: z
+          .array(
+            z.object({
+              id: z.string(),
+              kind: z.union([
+                z.const('coupon'),
+                z.const('membership'),
+                z.const('credit_card'),
+                z.const('promo'),
+                z.const('delivery_waiver'),
+              ]),
+              name: z.string(),
+              condition: z
+                .object({
+                  minSpend: z.number(),
+                  /** 英文星期枚举，避免 0-based 歧义（§5.1）。 */
+                  weekday: z.union([
+                    z.const('monday'),
+                    z.const('tuesday'),
+                    z.const('wednesday'),
+                    z.const('thursday'),
+                    z.const('friday'),
+                    z.const('saturday'),
+                    z.const('sunday'),
+                  ]),
+                })
+                .default({}),
+              discount: z.object({
+                type: z.union([z.const('fixed'), z.const('percent')]),
+                amount: z.number(),
+                /** percent 时的封顶金额（固定减免不用）。 */
+                cap: z.number(),
+              }),
+              /** 结算页默认已抵扣 → 运行时 alreadyIncludedInPayable=true（§5.3）。 */
+              autoApplied: z.boolean().default(false),
+              quota: z
+                .object({
+                  dailyLimit: z.union([z.number(), z.const(null)]).default(null),
+                  monthlyLimit: z.union([z.number(), z.const(null)]).default(null),
+                  totalQuota: z.union([z.number(), z.const(null)]).default(null),
+                  lastUsedAt: z.union([z.string(), z.const(null)]).default(null),
+                })
+                .default({
+                  dailyLimit: null,
+                  monthlyLimit: null,
+                  totalQuota: null,
+                  lastUsedAt: null,
+                }),
+              /** 仅"同平台内、同支付方式"的满减互斥（§5.6）。 */
+              exclusiveGroup: z.string(),
+              /** 默认 false：同一张卡跨平台不互斥；仅显式 true 才跨平台互斥（§5.6）。 */
+              crossPlatformExclusive: z.boolean().default(false),
+            }),
+          )
+          .default([]),
       }),
     )
     .default({
-      meituan: { enabled: true, appId: 'com.sankuai.meituan', priceToleranceYuan: 1.0 },
-      eleme: { enabled: true, appId: 'me.ele', priceToleranceYuan: 1.0 },
+      meituan: {
+        enabled: true,
+        appId: 'com.sankuai.meituan',
+        priceToleranceYuan: 1.0,
+        strategies: [
+          {
+            id: 'meituan-shenquan',
+            kind: 'membership',
+            name: '美团神券 满30减5',
+            condition: { minSpend: 30 },
+            discount: { type: 'fixed', amount: 5 },
+            autoApplied: true,
+            quota: { dailyLimit: null, monthlyLimit: null, totalQuota: null, lastUsedAt: null },
+            crossPlatformExclusive: false,
+          },
+          {
+            id: 'cmb-wednesday',
+            kind: 'credit_card',
+            name: '招商银行 周三满50减10',
+            condition: { minSpend: 50, weekday: 'wednesday' },
+            discount: { type: 'fixed', amount: 10 },
+            autoApplied: false,
+            quota: { dailyLimit: 1, monthlyLimit: 4, totalQuota: null, lastUsedAt: null },
+            exclusiveGroup: 'meituan-pay-activity',
+            crossPlatformExclusive: false,
+          },
+        ],
+      },
+      eleme: {
+        enabled: true,
+        appId: 'me.ele',
+        priceToleranceYuan: 1.0,
+        strategies: [
+          {
+            id: 'eleme-cmb-wednesday',
+            kind: 'credit_card',
+            name: '招商银行 周三满50减10',
+            condition: { minSpend: 50, weekday: 'wednesday' },
+            discount: { type: 'fixed', amount: 10 },
+            autoApplied: false,
+            quota: { dailyLimit: 1, monthlyLimit: 4, totalQuota: null, lastUsedAt: null },
+            exclusiveGroup: 'eleme-pay-activity',
+            crossPlatformExclusive: false,
+          },
+        ],
+      },
     }),
 })
 

@@ -3,7 +3,10 @@
 > 本文件把项目拆成**可执行阶段**（P0–P5），每阶段给出**可判定的验收标准（DoD）**，不达标不算完成。
 > **章节编号保持 §9 不变**。技术设计见 [`module-spec.md`](./module-spec.md)，决策见 [`decisions.md`](./decisions.md)。
 
-**当前进度**：基建完成 + **P0 完成** + **P1 完成**（插件骨架 + 异步任务 + Mock，全链路跑通）+ **P2 完成**（adb 驱动/连接重连/能力探测/弹窗恢复/截图留证/只读演练脚本；**真机 §8.4 最小实验 PASS：Lenovo TB321FU / Android 16**）+ **P3 完成**（**美团真机"首页→搜索→选店→选规格/加购→去结算→读实付"全流程自动化跑通并验收** —— 券前/神抢手两种结算页布局抽取，`payable` 正确、`arithmetic.balanced`、`confidence=high`、`needsConfirm=false`；"待使用红包"作 presumed optionalSaving 不计入；`tapPoint` 安全点按、验证码 `NeedsHumanError` 零点击）；离线 104 tests 全绿。下一步 **P4 多平台 + 策略 + 等价分组**。
+**当前进度**：基建完成 + **P0 完成** + **P1 完成**（插件骨架 + 异步任务 + Mock，全链路跑通）+ **P2 完成**（adb 驱动/连接重连/能力探测/弹窗恢复/截图留证/只读演练脚本；**真机 §8.4 最小实验 PASS：Lenovo TB321FU / Android 16**）+ **P3 完成**（**美团真机"首页→搜索→选店→选规格/加购→去结算→读实付"全流程自动化跑通并验收** —— 券前/神抢手两种结算页布局抽取，`payable` 正确、`arithmetic.balanced`、`confidence=high`、`needsConfirm=false`；"待使用红包"作 presumed optionalSaving 不计入；`tapPoint` 安全点按、验证码 `NeedsHumanError` 零点击）+ **P4 完成**（**多平台 + 策略 + 等价分组**：饿了么真机结算页抽取（id/坐标行双路径）+ 策略四态（`price/strategies.ts`，配置最多 `presumed`、绝不假断言可用）+ 谨慎跨平台互斥（默认不互斥，显式才降级）+ 统一输入快照 `snapshotId/hash` 贯通 Quote 并在 `compare` 强制同快照、偏离归不可比组；离线 **120 tests** 全绿，`src/price` 行覆盖 97%+）。下一步 **P5 打磨**。
+
+> **P4 真机边界**：饿了么 App 在真机上未登录时触发**实名/短信验证（身份验证 + 短信验证码）**，按 AGENTS.md §0 红线 2 **立即停止、未做任何识别/点击**（已把设备退回桌面）。饿了么真机全流程自动跑通需用户本人先登录（属人工介入）；本阶段多平台能力以**离线 fixture 回放 + 真实代码路径单测**验收，设备侧仅做只读探测。
+
 
 ---
 
@@ -17,7 +20,7 @@
 | **P1 插件骨架 + 异步任务 + Mock**（2–3 天） | 插件包 + `cordis.patch.yml` + `price_agent` 异步工具（taskId / 进度 / 生命周期） + Mock 驱动 + **解耦/幂等/并发规范（§2.1/§7.6/§7.7）** | ① 一句话→`taskId`→进度→比价表全链路跑通；② **解耦**：`device.driver=mock|adb` 切换**不改业务代码**，`price/*` 脱离设备可单测；③ **幂等**：同 key 连调（含并发 10 次）只产生 1 个任务，`getResult` 可重复只读，同键异参返回 `IDEMPOTENCY_KEY_REUSED`；④ **并发**：设备锁下两任务串行不交叉点按，记账并发写不损坏，锁超时返回 `BUSY`；⑤ **取消**：取消后 `status=cancelled` 且 Mock 子步骤停止；⑥ **重取**：DSH 重启后凭 `taskId` 取回结果；⑦ **过期**：TTL 过后返回 `expired`；⑧ 结果原子写入（无半截 JSON）；⑨ **复用**：抽查无自写存储/锁/spawn（全部走 §2.2 复用清单）；⑩ **边界**：`price/*` 无 IO、`task/*` 不 import 设备实现、循环依赖=0（§4.4 规则可校验） |
 | **P2 真机通道 + 能力探测**（2–3 天） | adb 无线调试、driver、能力探测/页面识别/截图对照/状态机断言/弹窗拦截 | ① 用 §8.4 最小实验脚本判定无线调试**可用**；② 断开后**自动重连 1 次**，再失败给出可读报错；③ 对美团跑"只读演练"，产出**能力探测报告**（哪些页面 tree 可读/需 OCR）；④ 每步断言失败能**截图 + dump 留证** |
 | **P3 单平台抓价**（3–5 天） | 美团"搜索→选店→结算→读实付" + 控件/OCR + 两层校验 + 证据绑定 | ① 对目标门店取到 `payable`，并给出 `confidence`/`evidence`/`validUntil`；② 注入 3 种干扰（升级弹窗/定位授权/加载慢）仍能完成或明确 fail 并留证；③ OCR 路径触发质量门（低置信→`needsConfirm`） |
-| **P4 多平台 + 策略 + 等价分组** | 饿了么接入、优惠四态、谨慎互斥、统一输入快照 + 分组比价 | ① 两平台从**同一 `snapshotId`** 派生；② 条件偏离的 Quote 归入不可比组；③ `effectivePrice` 双口径正确、无重复扣；④ 跨平台默认不互斥（配置显式才互斥） |
+| **P4 多平台 + 策略 + 等价分组**（已完成 ✅） | 饿了么接入、优惠四态、谨慎互斥、统一输入快照 + 分组比价 | ① 两平台从**同一 `snapshotId`** 派生 ✅（Quote 带 `snapshotId/hash`，`compare` 校验 `query.hash` 唯一）；② 条件偏离的 Quote 归入不可比组 ✅（`detectDeviations` + snapshot 不一致强制 `deviatedConditions` → `comparable=false`）；③ `effectivePrice` 双口径正确、无重复扣 ✅（仅 `verified && !alreadyIncluded` 扣；presumed 不扣）；④ 跨平台默认不互斥、显式才互斥 ✅（`applyCrossPlatformExclusivity`） |
 | **P5 打磨** | 弹窗/风控、异常重试、证据清理、隐私与合规 | ① 隐私：截图默认脱敏且可清理；② 遇验证码暂停并提示；③ 文档与实现一致 |
 
 > **本轮交付边界：先做 P0 + P1（不碰手机、Mock 数据）**，你在 DSH 里就能看到"一句话 → taskId → 实时进度 → 分组比价 → 证据过期/重取"的完整效果。**P0/P1 的 DoD 全绿**后再决定是否投 P2+ 真机。

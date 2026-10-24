@@ -11,7 +11,11 @@
 | `extract.ts` | 结算页 dump → 原始事实 | `extractSettleFacts`, `enterViaOpenTag`, `SETTLE_ANCHOR` |
 | `xml.ts` | uiautomator XML 最小解析（零依赖） | `parseNodes/textOf/hasResourceId` |
 | `selectors/*` | 控件选择器集中登记 | `GENERIC_SETTLE_SELECTORS`、`MEITUAN_SELECTORS` |
-| `meituanReal.ts` | **美团真机适配**（P3）：纯提取 + 真机流程 | `extractMeituanSettle`、`extractMeituanSettleFromDump`、`runMeituanReal`、`createNavigator`、`Navigator`、`parseMoneyText`、`isDangerNode` |
+| `meituanReal.ts` | **美团真机适配**（P3）：纯提取 + 真机流程 | `extractMeituanSettle`、`extractMeituanSettleFromDump`、`runMeituanReal`、`isDangerNode` |
+| `elemeReal.ts` | **饿了么真机适配**（P4）：纯提取 + 真机流程（与美团同构） | `extractElemeSettle`、`extractElemeSettleFromDump`、`runElemeReal`、`elemeAnchors` |
+| `settleRows.ts` | 结算页"坐标/行"抽取**通用原语**（平台共享）：聚行/标签→金额/结果卡/可点文案 | `buildRows`、`amountNearLabel`、`amountFromRow`、`amountLeftOfAnchor`、`parseMoneyText`、`firstResultCardCenter`、`firstActionableCenter` |
+| `navigator.ts` | 真机导航原语（平台共享，包装 Driver） | `createNavigator`、`Navigator`、`textAnchorRegex` |
+| `selectors/eleme.ts` | 饿了么选择器集中登记 | `ELEME_SELECTORS` |
 | `pageContracts.ts` | 各平台页面契约（§3.5.3 转移表） | `MEITUAN_PAGE_CONTRACTS` |
 
 ```ts
@@ -64,7 +68,15 @@ interface PlatformStrategy {
 - **验证码红线**：首页冷启动偶发弹**字序验证码**（"请按语序依次点击下图文字"，无字 WebView）。`classifyObstruction` 判 `captcha`（`textless-webview`），真实代码路径抛 `NeedsHumanError` 且零点击（已加回归）；遇之**立即停止、交人工**。
 - **⚠️ 尚未走通的真机阻碍**：（1）**冷启动全流程**（首页→搜索）仍需 ADBKeyboard 注入中文搜索词（见 40-device），且大量控件为混淆短 id（`h5x/myj/vqq`），全流程逐页校准仍需人工在旁；（2）店铺页菜单/加购控件随 App 版本变化，需按真机 dump 持续回填 `selectors/meituan.ts`。当前**已稳定走通并可验收**的是：**结算页 → 读实付**（含坐标抽取、短路零点击）。
 
+## P4 多平台（饿了么）与共享原语
+
+- **驱动解耦（同美团）**：`eleme.enterSettlePage` 按驱动能力选路——无 `probe` 的 Mock 走 `enterViaOpenTag`；真机 adb 走 `runElemeReal`。`task/runner` 不改。
+- **共享而非复制**：把"坐标/行抽取 + 结果卡/可点文案"抽到 `settleRows.ts`、把 `Navigator` 抽到 `navigator.ts`（均无平台知识），美团/饿了么各自只保留**平台特有**的锚点/文案/关键词。`meituanReal.ts` 仍 re-export `createNavigator/Navigator/buildRows` 等保持旧 API 不变。
+- **饿了么真机边界**：饿了么未登录时触发**实名/短信验证**（`WebViewActivity` 身份验证 + `UserLoginActivity` 短信码），按红线 §0-2 **立即停止、未点击/未识别**。真机全流程跑通需用户本人先登录；本轮多平台以离线 fixture + 真实代码路径验收。
+- **fixture**：`test/fixtures/eleme-settle.real-device.xml`（脱敏；30+3+1−5=29 balanced、`confidence=high`）。
+
 ## 测试
 - `test/fixtures` 回放：用 `MockDriver` 跑"首页→搜索→结算"脚本，断言每步 anchor 命中。
+- `test/platform-p4.test.ts`（16 tests）：饿了么结算页抽取（id / 坐标行双路径）→ balanced；策略四态（星期/门槛/日限/autoApplied）；跨平台默认不互斥 + 显式互斥降级；统一快照派生与偏离归不可比组；effectivePrice 双口径无重复扣；Mock 双平台全链路。
 - `test/platform-p3.test.ts`（16 tests，离线）：真机结算页抽取（id 路径 / 文案回退）、`¥28.9 vs ¥289`、`满30减5` 金额、选店导航链路（stub）、**无字 WebView 滑块→NeedsHumanError 且零点击**、升级/定位/加载干扰分类、读不到实付→needsConfirm、危险控件识别；
   **真机结算页（脱敏 fixture `meituan-settle.real-device.xml`，无 resource-id）→ 坐标/行抽取 balanced**、"待使用红包"不进已减（回归）、已在结算页短路零点击、真机付款按钮"极速支付"被识别为危险控件。

@@ -5,7 +5,7 @@
 ## 子文件职责
 | 文件 | 职责 | 公开 API |
 |---|---|---|
-| `runner.ts` | 单次比价流程编排（设备锁内串行） | `runCompare(deps, plan, sink, signal)`、`draftFromFacts` |
+| `runner.ts` | 单次比价流程编排（设备锁内串行）；P4 增：策略四态合并 / 偏离检测 / 跨平台互斥 | `runCompare(deps, plan, sink, signal)`、`draftFromFacts`、`detectDeviations`、`strategySpecsFor` |
 | `progress.ts` | 进度阶段与状态机 | `PHASES`, `emit(sink, line)`, `platformLine(i,n,platform,phase)` |
 | `store.ts` | 任务持久化映射（storageDomain 薄封装） | `saveTask/getTask/listTaskRecords/get+put+deleteIdempotency` |
 | `idempotency.ts` | 幂等键与映射 | `computeKey(snapshot,platformIds,options)`, `assertSameSnapshot` |
@@ -25,6 +25,7 @@
 - **恢复**：启动读 `tasks` 表，`processing` 且无活进程 → `failed(interrupted)`（§7.5(6)）。
 - 每步 `sink` → `ctx.jobs` 的 `updateProgress(line)`；不直接碰 UI。
 - **P2 能力探测**：`runCompare` 进设备锁后，若驱动实现 `probe()`（真机 adb）则先跑一次并写入进度；Mock 驱动无 `probe` 则跳过（不改 P1 行为）。`probeDevice/runMinExperiment` 在 Mock 下返回 `supported:false`，真机下走驱动 `probe()/ensureConnected()`，全程只读。
+- **P4 策略与快照（runner）**：每平台抽取后（1）用 `strategySpecsFor(config, id)` 读策略、`evaluateStrategies`（基数=费用原价）产出四态 savings，与结算页 `optionalSavings` 去重合并进 `QuoteDraft`；（2）`draftFromFacts` 写入 `snapshotId/snapshotHash` 并 `detectDeviations`（qty/规格偏离 → `deviatedConditions`）；（3）全部平台后 `applyCrossPlatformExclusivity` 做谨慎互斥，再 `priceQuote` + `compare`。**不重复扣**：`effectivePrice` 仍只由 `deductibleSavings` 决定。
 
 ## 本模块必须遵守的共享规则（清单）
 - 异步契约与工具返回：§7.4

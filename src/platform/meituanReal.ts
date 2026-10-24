@@ -10,32 +10,38 @@
  *
  * 复用：`device/steps.ts` 是 §30 明确允许平台使用的"动作+断言+恢复"能力原语（非设备实现）。
  */
-import type { Bounds, UiNode } from '../device/uixml.ts'
+import type { UiNode } from '../device/uixml.ts'
 import { parseUiNodes } from '../device/uixml.ts'
-import { waitForAnyState } from '../device/steps.ts'
-import type { Driver, UiSelector } from '../device/driver.ts'
+import type { UiSelector } from '../device/driver.ts'
 import type { ComparisonConditions, DiscountKind, FeeKind, OptionalSaving } from '../price/model.ts'
 import { itemScore } from '../price/similarity.ts'
 import { MEITUAN_SELECTORS } from './selectors/meituan.ts'
+import type { Navigator } from './navigator.ts'
+import {
+  amountFromRow,
+  amountLeftOfAnchor,
+  amountNearLabel,
+  buildRows,
+  parseMoneyText,
+  PRICE_ONLY_RE,
+  rowText,
+} from './settleRows.ts'
 import type { RawQuoteFacts } from './types.ts'
 
+// 行/坐标原语已抽到 platform/settleRows.ts（平台共享）；此处 re-export 保持对外 API 不变。
+export {
+  buildRows,
+  describeBounds,
+  firstActionableCenter,
+  firstResultCardCenter,
+  parseMoneyText,
+  rowText,
+} from './settleRows.ts'
+export type { Row } from './settleRows.ts'
+export { createNavigator } from './navigator.ts'
+export type { Navigator } from './navigator.ts'
+
 // ────────────────────────────── 纯提取（可离线测） ──────────────────────────────
-
-const MONEY_YEN_RE = /[¥￥]\s*(-?\d+(?:\.\d{1,2})?)/
-const MONEY_ANY_RE = /-?\d+(?:\.\d{1,2})?/
-
-/**
- * 从一段文案里取金额（元）；取不到返回 NaN。
- * 优先取 **¥/￥ 前缀** 的数（避免 "满30减5 -¥5.00" 误取 30），无 ¥ 时退回第一个数字。
- */
-export function parseMoneyText(s: string | undefined): number {
-  if (!s) return Number.NaN
-  const yen = MONEY_YEN_RE.exec(s)
-  const m = yen ? yen : MONEY_ANY_RE.exec(s)
-  if (!m) return Number.NaN
-  const n = Number.parseFloat(m[1] ?? m[0] ?? '')
-  return Number.isFinite(n) ? n : Number.NaN
-}
 
 /** 按短名（resource-id 后缀）找第一个有 text 的节点。 */
 function nodeByIdOrText(nodes: UiNode[], names: string[]): UiNode | undefined {
@@ -267,80 +273,6 @@ export function extractMeituanSettle(
 
 // ─────────────────────── 坐标/行助手（真机无 resource-id 时用） ───────────────────────
 
-const PRICE_ONLY_RE = /^[¥￥\-−—\s\d.,]+$/
-const ROW_TOL_Y = 26
-
-interface Row {
-  y0: number
-  y1: number
-  yc: number
-  nodes: UiNode[]
-}
-
-/** 按 y 中心把有文本的节点聚成"视觉行"，行内按 x 升序。 */
-export function buildRows(nodes: UiNode[], tolY = ROW_TOL_Y): Row[] {
-  const rows: Row[] = []
-  for (const n of nodes) {
-    const t = (n.text ?? n.label ?? '').trim()
-    if (!t || !n.bounds) continue
-    const [, y1, , y2] = n.bounds
-    const yc = (y1 + y2) / 2
-    let row = rows.find((r) => Math.abs(r.yc - yc) <= tolY)
-    if (!row) {
-      row = { y0: y1, y1: y2, yc, nodes: [] }
-      rows.push(row)
-    }
-    row.nodes.push(n)
-    row.y0 = Math.min(row.y0, y1)
-    row.y1 = Math.max(row.y1, y2)
-  }
-  for (const r of rows) r.nodes.sort((a, b) => a.bounds![0] - b.bounds![0])
-  return rows
-}
-
-function rowText(r: Row): string {
-  return r.nodes
-    .map((n) => (n.text ?? n.label ?? '').trim())
-    .filter(Boolean)
-    .join(' ')
-}
-
-/**
- * 节点级"标签→金额"：找文本以 label 开头的标签节点，取其**同一视觉行、右侧最近**的金额节点。
- * 比"按行合并"更稳（避免底部按钮栏被合并导致误取"极速支付"旁的金额）。
- */
-function amountNearLabel(nodes: UiNode[], keys: string[]): number {
-  const labels = nodes.filter((n) => {
-    const t = (n.text ?? '').trim()
-    return t && n.bounds && keys.some((k) => t === k || t.startsWith(k))
-  })
-  for (const label of labels) {
-    const lb = label.bounds!
-    const lyc = (lb[1] + lb[3]) / 2
-    const cands = nodes
-      .filter((n) => {
-        if (n === label || !n.bounds) return false
-        const t = (n.text ?? '').trim()
-        if (!t || !Number.isFinite(parseMoneyText(t))) return false
-        const b = n.bounds
-        const yc = (b[1] + b[3]) / 2
-        // 同一行（|Δy| 小）且在该标签右侧（容忍 4px 回退）。
-        return Math.abs(yc - lyc) <= 30 && b[0] >= lb[2] - 4
-      })
-      .sort((a, b) => a.bounds![0] - b.bounds![0])
-    for (const c of cands) {
-      const v = parseMoneyText((c.text ?? '').trim())
-      if (Number.isFinite(v)) return Math.abs(v)
-    }
-  }
-  return Number.NaN
-}
-
-/** 找"标签行"的金额（费用行用）。 */
-function amountFromRow(nodes: UiNode[], keys: string[]): number {
-  return amountNearLabel(nodes, keys)
-}
-
 /**
  * 实付金额：优先找「券前/实付/合计/应付/待支付/实付款」标签，取同一行右侧最近金额。
  * 美团结算页底部有两种变体：
@@ -360,25 +292,8 @@ function payableFromRows(nodes: UiNode[]): number {
   ])
   if (Number.isFinite(byLabel)) return byLabel
 
-  // 变体 B：找"共减¥Y"，取其**左侧**最近的金额节点（同一行）。
-  const gong = nodes.find((n) => n.bounds && (n.text ?? '').trim().startsWith('共减'))
-  if (gong?.bounds) {
-    const gy = (gong.bounds[1] + gong.bounds[3]) / 2
-    const left = nodes
-      .filter((n) => {
-        if (!n.bounds) return false
-        const t = (n.text ?? '').trim()
-        if (!t || !Number.isFinite(parseMoneyText(t))) return false
-        const yc = (n.bounds[1] + n.bounds[3]) / 2
-        return Math.abs(yc - gy) <= 30 && n.bounds[2] <= gong.bounds![0] + 4
-      })
-      .sort((a, b) => b.bounds![0] - a.bounds![0]) // 最靠右（即紧邻"共减"左侧）
-    if (left[0]) {
-      const v = parseMoneyText((left[0].text ?? '').trim())
-      if (Number.isFinite(v)) return Math.abs(v)
-    }
-  }
-  return Number.NaN
+  // 变体 B：无"券前"标签时，取"共减¥Y"左侧最近金额（即券前实付）。
+  return amountLeftOfAnchor(nodes, '共减')
 }
 
 /** 从行里抽取已应用的优惠（配送费减免 / 商家代金券、满减 / 立减）。 */
@@ -519,35 +434,6 @@ export function settleAnchors(): UiSelector[] {
 
 // ────────────────────────────── 真机流程（走 steps 原语） ──────────────────────────────
 
-export interface Navigator {
-  /** 当前界面节点。 */
-  nodes(): Promise<UiNode[]>
-  /** 当前界面原始 dump（写证据）。 */
-  dump(): Promise<string>
-  /** 按选择器点击（安全护栏在 driver.tap 内部）。 */
-  tap(sel: UiSelector, what: string): Promise<void>
-  /** 按屏幕坐标点击（安全：driver.tapPoint 内部会解析命中节点并过 assertTapSafe）。可选（Mock 无）。 */
-  tapPoint?(x: number, y: number, what: string): Promise<void>
-  /** 按选择器输入文本。 */
-  input(sel: UiSelector, text: string, what: string): Promise<void>
-  /** 等待锚点（任一命中），返回最新节点与 dump；命中验证码/登录抛 NeedsHumanError。 */
-  waitAny(
-    anchors: UiSelector[],
-    what: string,
-    timeoutMs?: number,
-  ): Promise<{ nodes: UiNode[]; dump: string }>
-  /** 向上滚动一屏。 */
-  swipeUp(): Promise<void>
-  /** 第一个"可点击结果卡"中心点（搜索结果页进入店铺用）。无则 undefined。 */
-  firstResultCard?(): Promise<{ x: number; y: number } | undefined>
-  /** 第一个"文案命中任一关键词且可点"的控件中心点（加购/去结算等用）。 */
-  firstActionable?(keywords: string[]): Promise<{ x: number; y: number } | undefined>
-  /** 轻量重取一帧（让 UI 稳定后重新定位；实现通常是一次 dump）。 */
-  repaint?(): Promise<void>
-  /** 当前界面是否存在文案命中任一关键词的节点（用于"滚动后再找"）。 */
-  hasAny?(keywords: string[]): Promise<boolean>
-}
-
 /**
  * 真机走查：首页 → 搜索 item → 选第一家店 → 加购 → 进结算 → 读实付。
  * 任一步 anchor 超时 → StateAssertionError（含证据）；命中验证码/登录 → NeedsHumanError。
@@ -632,104 +518,6 @@ export async function runMeituanReal(
   // 8) 最后一次机会：直接等结算页（若已进入）。
   const { nodes, dump } = await nav.waitAny(settle, '结算页', 12000)
   return extractMeituanSettle(nodes, cond, dump)
-}
-
-/** 由 Driver 构造 Navigator（在 platform 内成型，避免把"具体实现"下沉到 task）。 */
-export function createNavigator(driver: Driver, timeoutMs = 8000): Navigator {
-  return {
-    nodes: async () => parseUiNodes(await driver.dump()),
-    dump: () => driver.dump(),
-    tap: (sel, _what) => driver.tap(sel),
-    tapPoint: async (x, y, _what) => {
-      if (driver.tapPoint) return driver.tapPoint(x, y)
-      // 退化：无 tapPoint 能力的驱动（如 Mock）在真实导航里不会被用到；这里仅兜底。
-      throw new Error('driver 不支持 tapPoint')
-    },
-    input: (sel, text, _what) => driver.input(sel, text),
-    swipeUp: () => driver.swipe('up'),
-    waitAny: async (anchors, _what, perCallTimeoutMs) => {
-      const assertions = anchors.map((a) => ({
-        presentResourceIds: a.resourceId ? [a.resourceId] : undefined,
-        presentTexts: a.text ? [textAnchorRegex(a.text)] : undefined,
-      }))
-      const xml = await waitForAnyState(driver, assertions, {
-        timeoutMs: perCallTimeoutMs ?? timeoutMs,
-      })
-      return { nodes: parseUiNodes(xml), dump: xml }
-    },
-    firstResultCard: async () => {
-      const nodes = parseUiNodes(await driver.dump())
-      return firstResultCardCenter(nodes)
-    },
-    firstActionable: async (keywords) => {
-      const nodes = parseUiNodes(await driver.dump())
-      return firstActionableCenter(nodes, keywords)
-    },
-    repaint: async () => {
-      await driver.dump()
-    },
-    hasAny: async (keywords) => {
-      const nodes = parseUiNodes(await driver.dump())
-      return nodes.some((n) =>
-        keywords.some((k) => (n.text ?? '').includes(k) || (n.label ?? '').includes(k)),
-      )
-    },
-  }
-}
-
-/** 搜索结果页第一张"可点结果卡"中心点：取面积最大的可点容器里、含菜品/店铺特征的那张。 */
-export function firstResultCardCenter(nodes: UiNode[]): { x: number; y: number } | undefined {
-  const cards = nodes
-    .filter((n) => n.clickable && n.bounds)
-    .map((n) => ({ n, area: (n.bounds![2] - n.bounds![0]) * (n.bounds![3] - n.bounds![1]) }))
-    .filter((c) => c.area > 300_000) // 大卡片（整店条目）
-    .sort((a, b) => a.n.bounds![1] - b.n.bounds![1]) // 从上到下
-  const top = cards[0]?.n
-  if (!top?.bounds) return undefined
-  const b = top.bounds
-  // 点卡片上部（店铺名区），避开菜品缩略图/加号。
-  return { x: Math.round((b[0] + b[2]) / 2), y: Math.round(b[1] + (b[3] - b[1]) * 0.25) }
-}
-
-/** 第一个"文案命中关键词（含 content-desc）且可点"的控件中心点；找不到就在命中文本节点附近找可点。 */
-export function firstActionableCenter(
-  nodes: UiNode[],
-  keywords: string[],
-): { x: number; y: number } | undefined {
-  const hit = nodes.find(
-    (n) =>
-      n.bounds && keywords.some((k) => (n.text ?? '').includes(k) || (n.label ?? '').includes(k)),
-  )
-  if (hit?.bounds) {
-    // 命中节点自身可点则用它；否则用同/近 y、包含该文本的可点容器。
-    let target: UiNode | undefined = hit.clickable ? hit : undefined
-    if (!target) {
-      const yc = (hit.bounds[1] + hit.bounds[3]) / 2
-      const near = nodes
-        .filter(
-          (n) => n.clickable && n.bounds && Math.abs((n.bounds[1] + n.bounds[3]) / 2 - yc) < 40,
-        )
-        .sort(
-          (a, b) =>
-            (a.bounds![2] - a.bounds![0]) * (a.bounds![3] - a.bounds![1]) -
-            (b.bounds![2] - b.bounds![0]) * (b.bounds![3] - b.bounds![1]),
-        )
-      target = near[0]
-    }
-    const b = (target ?? hit).bounds!
-    return { x: Math.round((b[0] + b[2]) / 2), y: Math.round((b[1] + b[3]) / 2) }
-  }
-  return undefined
-}
-
-/** 文案锚点 → 正则（包含匹配；转义特殊字符）。 */
-function textAnchorRegex(text: string): RegExp {
-  return new RegExp(text.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'))
-}
-
-// bounds 仅用于调试打印，避免未使用告警。
-export function describeBounds(b: Bounds | undefined): string {
-  return b ? `[${b.join(',')}]` : 'n/a'
 }
 
 /** 供测试/排障：判定某节点是否是"提交订单/支付"类危险控件（只读，不点击）。 */

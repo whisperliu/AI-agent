@@ -242,7 +242,8 @@
     {"n":16,"at":"10-24 14:55","user":"继续执行","intent":"P3 真机校准(结算页读实付)","result":"真机结算页无 resource-id → 重写 extractMeituanSettle 为坐标/行抽取；待使用红包转 optionalSaving；结算页文案锚点+短路零点击；红线补 极速支付","verify":"真机 payable=30.98 balanced=true confidence=high needsConfirm=false；pnpm check 101/101；coverage 95.89%","status":"ok(P3 结算页读数 PASS)"},
     {"n":17,"at":"10-24 15:00","user":"(goal round 继续)","intent":"冷启动全流程 搜索→选店→加购→结算","result":"首页首屏弹出字序验证码(无字WebView) → 按红线 §0-2 立即停止，未识别/未点击；补 runMeituanReal 真实代码路径 NeedsHumanError+零点击回归","verify":"classifyObstruction=captcha；pnpm check 102/102","status":"blocked(需人工过验证码)"},
     {"n":18,"at":"10-24 15:37","user":"(goal round 继续，验证码已清除)","intent":"P3 真机冷启动全流程自动化跑通","result":"enterSettlePage(driver) 从首页全自动 搜索→选店→选规格/加购→去结算→读实付 = payable 19.9 balanced；修 id 后缀匹配/首页入口/banner dump/共减误判/神抢手变体/新增安全 tapPoint","verify":"真机 payable=19.9 balanced=true needsConfirm=false；pnpm check 104/104；19 P3 tests + 8 脱敏 fixture","status":"ok(P3 全流程 PASS)"},
-    {"n":19,"at":"10-24 15:44","user":"有一个问题，现在对话跑传递图片太多了…改进一下 / 收尾","intent":"降低上下文占用 + 收尾","result":"新增 scripts/evidence-inspect.mjs(dump→紧凑文本+坐标，替代读图)；AGENTS §2 加省上下文强制规则；README 补说明；清理 35MB 调试截图→1.6MB；本文件最终快照","verify":"pnpm check 104/104；脚本对脱敏 fixture 输出正确","status":"ok"}
+    {"n":19,"at":"10-24 15:44","user":"有一个问题，现在对话跑传递图片太多了…改进一下 / 收尾","intent":"降低上下文占用 + 收尾","result":"新增 scripts/evidence-inspect.mjs(dump→紧凑文本+坐标，替代读图)；AGENTS §2 加省上下文强制规则；README 补说明；清理 35MB 调试截图→1.6MB；本文件最终快照","verify":"pnpm check 104/104；脚本对脱敏 fixture 输出正确","status":"ok"},
+    {"n":20,"at":"10-24 16:10","user":"下一步进行P4","intent":"P4 多平台+策略+等价分组","result":"config 增 platforms.strategies;新增 price/strategies.ts(四态+谨慎互斥);Quote 带 snapshotId/hash 且 compare 强制同快照(偏离归不可比组);新增 platform/elemeReal+selectors/eleme;抽 settleRows/navigator 共享原语;runner 集成策略 savings 与互斥","verify":"pnpm check 122/122 全绿; src/price 行覆盖 97.15%(strategies 100%); 16 P4 tests + eleme 脱敏 fixture; 饿了么真机遇实名/短信验证→红线即停零点击","status":"ok(P4 完成)"}
   ],
   "fixes": [
     {"topic":"job owner","file":"src/core/jobs-adapter.ts","detail":"owner=exec.agent.id 贯通"},
@@ -253,17 +254,22 @@
     {"topic":"adb key home","file":"/home/liuqiaoqiao/.android","detail":"配对密钥同步到 dsh 进程 HOME，避免 unauthorized"},
     {"topic":"真机结算页无 id","file":"src/platform/meituanReal.ts","detail":"坐标/行抽取（buildRows+amountNearLabel）替代缺失 resource-id"},
     {"topic":"待使用红包误当已减","file":"src/platform/meituanReal.ts","detail":"转 optionalSaving(presumed)，不进 discounts/不抵扣 → 实付不再被算低 15 元"},
-    {"topic":"付款按钮漏拦(极速支付)","file":"src/core/safety.ts","detail":"FORBIDDEN_TEXTS 补 极速支付/立即付款等（真机发现）"}
+    {"topic":"付款按钮漏拦(极速支付)","file":"src/core/safety.ts","detail":"FORBIDDEN_TEXTS 补 极速支付/立即付款等（真机发现）"},
+    {"topic":"schemastery 无 optional/nullable","file":"src/config.ts","detail":"可选字段用裸 schema；可空用 z.union([z.number(),z.const(null)]).default(null)"},
+    {"topic":"策略假断言可用","file":"src/price/strategies.ts","detail":"配置/记账最多 presumed；星期/门槛/日限只降级 known_unavailable；effectivePrice 仍只扣 verified&&!alreadyIncluded"},
+    {"topic":"跨平台误互斥","file":"src/price/strategies.ts","detail":"applyCrossPlatformExclusivity 默认不互斥，仅 crossPlatformExclusive=true 且他平台 verified 才降级"},
+    {"topic":"坐标行抽取重复实现","file":"src/platform/settleRows.ts","detail":"美团/饿了么共享聚行+标签→金额+结果卡/可点原语，避免复制；amountNearLabel 改中心点比较"}
   ],
   "deliverables": [
     "src/**","test/**","scripts/web-plugin.patch.yml","scripts/install-into-web-profile.sh",
     "scripts/device-min-experiment.sh","scripts/device-rehearsal.mjs",
-    "test/fixtures/meituan-settle.real-device.xml",
-    "docs/conversation-log.md","CHANGELOG.md[19]-[31]"
+    "test/fixtures/meituan-settle.real-device.xml","test/fixtures/eleme-settle.real-device.xml",
+    "src/price/strategies.ts","src/platform/{elemeReal,settleRows,navigator}.ts","src/platform/selectors/eleme.ts",
+    "docs/conversation-log.md","CHANGELOG.md[19]-[35]"
   ]
 }
 ```
 
 ---
 
-*会话快照：2026-10-24 15:44 · P0/P1/P2(代码) 已提交（HEAD `e34301c`）；**P2 真机 §8.4 PASS（Lenovo TB321FU）**；**P3 真机全流程 PASS（首页→搜索→选店→加购→去结算→读实付，payable=19.9、balanced、confidence=high、needsConfirm=false；券前变体 30.98 亦 PASS）**；**已改善上下文占用（文本优先 + evidence-inspect 脚本 + 清理调试截图）**；下一步 P4 多平台。*
+*会话快照：2026-10-24 16:10 · P0–P3 已提交（HEAD `55e93f6`）；**P2 真机 §8.4 PASS（Lenovo TB321FU）**；**P3 真机全流程 PASS（payable=19.9 balanced）**；**P4 完成（多平台饿了么 + 策略四态 + 谨慎互斥 + 统一输入快照分组；pnpm check 122/122、src/price 覆盖 97.15%）**；饿了么真机遇实名/短信验证按红线即停（需用户先登录）；下一步 P5 打磨。*

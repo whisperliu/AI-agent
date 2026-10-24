@@ -436,6 +436,20 @@
 
 ---
 
+### [35] 2026-10-24 16:10 · P4 多平台 + 策略四态 + 谨慎互斥 + 统一输入快照（等价分组）
+- **为什么**：P3 只跑通美团单平台；P4 要求"饿了么接入 + 优惠四态 + 谨慎互斥 + 统一快照 + 分组比价"，且四条 DoD（同 snapshotId 派生、偏离归不可比组、effectivePrice 双口径无重复扣、跨平台默认不互斥）必须可离线判定。
+- **做了什么**：
+  1. **配置**（`src/config.ts` + `cordis.patch.yml`）：`platforms.<id>.strategies[]`（id/kind/name/condition{minSpend,weekday}/discount{type,amount,cap}/autoApplied/quota{dailyLimit,monthlyLimit,totalQuota,lastUsedAt}/exclusiveGroup/crossPlatformExclusive）；内置美团神券+招行周三、饿了么招行周三示例。实测 schemastery **无 `.optional()/.nullable()`**，改用裸 schema + `z.union([z.number(), z.const(null)]).default(null)`。
+  2. **纯核心策略引擎**（新增 `src/price/strategies.ts`）：`evaluateStrategy/-Strategies` 把配置策略映射为 `OptionalSaving` 四态——配置/本地记账**最多 `presumed`**（绝不断言可用）；星期/门槛/日限只用于**降级** `known_unavailable`；`autoApplied` → `alreadyIncludedInPayable=true`。`applyCrossPlatformExclusivity` 做**谨慎互斥**：默认不互斥，仅 `crossPlatformExclusive=true` 且他平台 `verified` 已用时降级。
+  3. **统一输入快照**：`Quote/QuoteDraft` 增 `snapshotId/snapshotHash`（`src/price/model.ts`）；`priceQuote` 透传；`compare` 校验每 Quote `snapshotHash === query.hash`，不一致追加 `deviatedConditions`（`snapshot 不一致…`）→ 不可比组（`src/price/engine.ts`）；`QuoteSchema` 同步字段（`src/price/schema.ts`）；`runner.draftFromFacts` 写入快照 + `detectDeviations`（qty/规格偏离）→ 归不可比组。
+  4. **多平台·饿了么**：新增 `src/platform/elemeReal.ts`（`extractElemeSettle/FromDump`、`runElemeReal`、`elemeAnchors`，与美团同构，id/坐标行双路径）+ `selectors/eleme.ts`；`src/platform/eleme.ts` 按驱动能力选 mock/real。
+  5. **共享原语去重**：把"坐标/行抽取 + 结果卡/可点文案"抽到 `src/platform/settleRows.ts`、把 `Navigator` 抽到 `src/platform/navigator.ts`（均无平台知识）；`meituanReal.ts` re-export 旧 API 保持兼容。**顺序无关精度修复**：`amountNearLabel` 改为"金额中心在标签中心右侧"判据（比端点比较更稳）。
+  6. **runner 集成**（`src/task/runner.ts`）：每平台抽取后按 `strategySpecsFor` 读策略、`evaluateStrategies`（基数=费用原价）产出四态 savings 并与结算页 `optionalSavings` 去重合并；全部平台后 `applyCrossPlatformExclusivity`；再 `priceQuote + compare`。
+- **验证方式（离线，`pnpm check` 全绿）**：新增 `test/platform-p4.test.ts`（16 tests）+ 脱敏 fixture `eleme-settle.real-device.xml`；**120 tests 全过**（原 104 + 16）；typecheck/lint/format/boundary 全绿；`test:coverage` `src/price` 行 **97.14%**（strategies.ts 100%）。覆盖：饿了么 id/坐标行抽取 balanced、策略四态（星期/门槛/日限/autoApplied）、跨平台默认不互斥 / 显式互斥降级、快照一致派生与偏离归不可比组、effectivePrice 双口径无重复扣、Mock 双平台全链路。
+- **真机边界（红线）**：饿了么 App 真机未登录即触发**实名/短信验证**（`WebViewActivity` 身份验证 + `UserLoginActivity` 短信码），按 AGENTS.md §0 红线 2 **立即停止、未识别/未点击**，已将设备退回桌面；饿了么真机全流程需用户本人先登录（人工介入）。本阶段多平台以离线 fixture + 真实代码路径验收。
+- **未影响已有行为**：美团 P3 全流程 19 tests 仍全绿；`meituanReal` 公开 API 经 re-export 保持稳定。
+- **更新后状态**：**P4 完成**（多平台 + 策略 + 等价分组），四条 DoD 均落地并可离线判定；下一步 P5 打磨。
+
 ---
 
 ## 追加条目的模板（供后续每轮使用）
@@ -451,4 +465,4 @@
 
 ---
 
-*最后更新：2026-10-24 15:44 +08:00*
+*最后更新：2026-10-24 16:10 +08:00*

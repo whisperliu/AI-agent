@@ -87,6 +87,8 @@ export function priceQuote(draft: QuoteDraft): Quote {
     needsConfirm: a.needsConfirm,
     deviatedConditions: draft.deviatedConditions,
     optionalSavings: draft.optionalSavings,
+    snapshotId: draft.snapshotId,
+    snapshotHash: draft.snapshotHash,
     evidence,
   }
 }
@@ -130,6 +132,16 @@ export function compare(
   opts: CompareOptions,
 ): CompareResult {
   const note: string[] = []
+
+  // 统一输入快照一致性（§6.6）：任何 Quote 若声明了 snapshotHash 却与本次 snapshot 不一致，
+  // 说明它偏离了唯一输入快照 → 追加 deviatedConditions，强制归入不可比组（DoD②）。
+  for (const q of quotes) {
+    if (q.snapshotHash && q.snapshotHash !== conditions.hash) {
+      const reason = `snapshot 不一致（期望 ${conditions.hash.slice(0, 8)}…，实际 ${q.snapshotHash.slice(0, 8)}…）`
+      q.deviatedConditions = [...(q.deviatedConditions ?? []), reason]
+    }
+  }
+
   const byKey = new Map<string, Quote[]>()
   for (const q of quotes) {
     const k = mealKey(q)

@@ -17,6 +17,9 @@ import type {
 } from '../price/model.ts'
 import { compare, priceQuote } from '../price/engine.ts'
 import { itemScore } from '../price/similarity.ts'
+import { applyCrossPlatformExclusivity, evaluateStrategies } from '../price/strategies.ts'
+import type { PlatformSavings, StrategySpec } from '../price/strategies.ts'
+import type { OptionalSaving } from '../price/model.ts'
 import type { PlatformStrategy, RawQuoteFacts } from '../platform/types.ts'
 import { platformLine, PHASES } from './progress.ts'
 
@@ -58,7 +61,9 @@ export async function runCompare(
         }
       }
 
-      const quotes: Quote[] = []
+      const drafts: QuoteDraft[] = []
+      const savingsGroups: PlatformSavings[] = []
+      const nowMs = deps.clock.now()
       const n = plan.platforms.length
       for (let i = 0; i < n; i++) {
         if (signal?.aborted) throw new Error('cancelled')
@@ -73,10 +78,24 @@ export async function runCompare(
           deps,
           `${plan.taskId}:${strategy.id}`,
         )
-        quotes.push(priceQuote(draft))
+        // 平台级策略（§5.1–§5.5）→ 四态 OptionalSaving；与结算页 presumed 红包合并。
+        const specs = strategySpecsFor(deps.config, strategy.id)
+        const orderAmount = orderAmountOf(facts)
+        const configSavings = evaluateStrategies(specs, {
+          platform: strategy.id,
+          payable: orderAmount,
+          now: nowMs,
+        })
+        savingsGroups.push({ platform: strategy.id, specs, savings: configSavings })
+        draft.optionalSavings = mergeSavings(facts.optionalSavings ?? [], configSavings)
+        drafts.push(draft)
       }
+      // 跨平台谨慎互斥（§5.6）：默认不互斥，仅显式 crossPlatformExclusive 才降级。
+      const downgraded = applyCrossPlatformExclusivity(savingsGroups)
+      if (downgraded.length > 0) p.update(`策略互斥 · 已按跨平台互斥降级：${downgraded.join(', ')}`)
       p.update('完成 · 正在折算分组比价')
       if (signal?.aborted) throw new Error('cancelled')
+      const quotes: Quote[] = drafts.map((d) => priceQuote(d))
       return compare(quotes, plan.cond, { taskId: plan.taskId, now: deps.clock.now() })
     },
     { waitMs: deps.config.task.lockWaitMs, root: deps.lockRoot },
@@ -85,6 +104,26 @@ export async function runCompare(
 
 function verdictOf(facts: RawQuoteFacts): string {
   return `实付 ¥${facts.payable.toFixed(2)}（${facts.confidence === 'high' ? 'tree 读取' : 'OCR/推算'}）`
+}
+
+/** 取某平台配置里的策略（与 price/strategies.StrategySpec 结构对齐）。 */
+export function strategySpecsFor(config: Deps['config'], platformId: string): StrategySpec[] {
+  const p = config.platforms[platformId]
+  return (p?.strategies ?? []) as unknown as StrategySpec[]
+}
+
+/** 订单原价（用于门槛判断与 percent 折算基数）：费用合计（非 derived，未减优惠）。 */
+function orderAmountOf(facts: RawQuoteFacts): number {
+  const gross = facts.fees.filter((f) => f.source !== 'derived').reduce((s, f) => s + f.amount, 0)
+  return gross > 0 ? gross : facts.payable
+}
+
+/** 合并"结算页 presumed 红包"与"配置策略四态"（按 id 去重，结算页实证优先）。 */
+function mergeSavings(fromPage: OptionalSaving[], fromConfig: OptionalSaving[]): OptionalSaving[] {
+  const byId = new Map<string, OptionalSaving>()
+  for (const s of fromPage) byId.set(s.id, s)
+  for (const s of fromConfig) if (!byId.has(s.id)) byId.set(s.id, s)
+  return [...byId.values()]
 }
 
 /** 原始事实 → 引擎输入草稿（补 evidence / extraction，交给 price 判定）。 */
@@ -111,6 +150,8 @@ export function draftFromFacts(
     composition: facts.composition,
   }
 
+  const deviatedConditions = detectDeviations(facts, plan.cond, item)
+
   return {
     platform,
     store,
@@ -119,6 +160,9 @@ export function draftFromFacts(
     discounts: facts.discounts,
     payable: facts.payable,
     optionalSavings: facts.optionalSavings,
+    deviatedConditions: deviatedConditions.length > 0 ? deviatedConditions : undefined,
+    snapshotId: plan.cond.snapshotId,
+    snapshotHash: plan.cond.hash,
     extraction: { confidence: facts.confidence, byField: facts.byField },
     evidence: {
       quoteId,
@@ -134,4 +178,28 @@ export function draftFromFacts(
       redaction: 'applied',
     },
   }
+}
+
+/**
+ * 快照偏离检测（§6.6）：平台返回的条件若与统一输入快照不一致 → 归入"不可比组"。
+ * 目前比对可稳定判定的：数量、规格（若快照固定了规格而平台明确给出不同规格）。
+ * 商品名/门店的等价由 price/similarity 在分组时判定，不在此重复。
+ */
+export function detectDeviations(
+  facts: RawQuoteFacts,
+  cond: ComparisonConditions,
+  item: Item,
+): string[] {
+  const out: string[] = []
+  if (Number.isFinite(facts.qty) && facts.qty !== cond.qty) {
+    out.push(`qty: 期望 ${cond.qty} 份，平台为 ${facts.qty} 份`)
+  }
+  const wantSpec = (cond.spec ?? []).map((s) => s.trim()).filter(Boolean)
+  const gotSpec = (facts.itemSpec ?? '').trim()
+  if (wantSpec.length > 0 && gotSpec) {
+    const ok = wantSpec.some((w) => gotSpec.includes(w) || w.includes(gotSpec))
+    if (!ok) out.push(`spec: 期望「${wantSpec.join('/')}」，平台为「${gotSpec}」`)
+  }
+  void item
+  return out
 }
