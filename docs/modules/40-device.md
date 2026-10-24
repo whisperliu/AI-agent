@@ -32,6 +32,7 @@ interface Driver {
 ## 实现要点（特有）
 - `adb.ts` **必须**调 `runNativeCommand('adb', argv, signal, 'hidden')`，**不得**自写 spawn/超时/取消（§2.2）。命令经注入的 `AdbRunner` 边界（默认 `runNativeCommand`），**测试可注入假 runner 离线回放**，无需真机。
 - **连接/重连（§8.3，P5 增强）**：每次动作前 `ensureConnected()` → `adb devices` 探活；目标掉线且是网络地址（`host:port`）→ 依次尝试 ①配置的 `host:port` ②学到的 mDNS 实例名（`._adb-tls-connect._tcp`）③`adb mdns services` **主动发现的当前端口**，任一成功即重连并沿用（手机重启后端口变化不再需人工重配）；全失败抛可读错误（提示无线调试/同网段/端口）。
+- **daemon 冷启动预热**：`adb` daemon 刚启动时首帧 `adb devices` 可能为空（mDNS 发现需 1–2s）。`ensureConnected` 在**首次**为空时先 `adb mdns check` 再短轮询（3×500ms）；只做一次，注入 runner（离线测试）时跳过。
 - **截图二进制**：`shell screencap -p /sdcard/x.png` 落盘 → `adb pull` 到本地临时文件 → `readFile` 读字节（**不经 utf8**，否则 PNG 损坏）；校验 PNG 魔数。
 - **dump 三级兜底（P3 真机发现）**：`exec-out uiautomator dump /dev/tty` → `shell dump` 落盘 + cat → **`dump --compressed`**。美团搜索结果等重页面标准 dump 会被系统 `Killed`（落盘 0 字节），`--compressed` 可稳定产出且保留 `resource-id/text/bounds/clickable`。回归测试 `falls back to --compressed dump…`。
 - **中文输入的硬约束（P3 真机）**：`adb shell input text "中文"` 在搜狗等输入法下直接 NPE、且内容不落框（拉丁字符也不可靠）；**Unicode 文本注入必须走 ADBKeyboard 的 `ADB_INPUT_TEXT` 广播**（`am broadcast -a ADB_INPUT_TEXT --es msg 关键词`，注意空格会被 `am` 拆参数 → 用无空格关键词或加引号）。这是"环境辅助手段"，非风控绕过；跑完可 `ime set` 切回原输入法。

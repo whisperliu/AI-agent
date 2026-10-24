@@ -98,6 +98,10 @@ function defaultRunner(adbPath: string): AdbRunner {
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms))
+}
+
 /** 创建 adb 驱动。 */
 export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
   const adbPath = opts.adbPath ?? DEFAULT_ADB
@@ -121,6 +125,8 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
   let resolvedSerial: string | undefined = allowAuto ? undefined : opts.serial
   /** 从 mDNS 学到的无线调试实例名（仅作重连候选，不改配置）。 */
   let mdnsSerial: string | undefined
+  /** 是否已做过一次"等 daemon 发现无线设备"的预热。 */
+  let warmupDone = false
 
   /** 执行 `adb <argv>`（自动前置 `-s <serial>`，全局命令除外）。 */
   async function adb(argv: string[], signal?: AbortSignal): Promise<AdbExecResult> {
@@ -173,8 +179,30 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
     return undefined
   }
 
+  /**
+   * 刚启动的 adb daemon 需要 1–2 秒才通过 mDNS 自动发现无线设备；单次 `adb devices`
+   * 为空即判"离线"会误杀（真机实测：daemon 冷启动首查为空）。这里先 `adb mdns check`
+   * 打开发现，再短轮询几帧，仍为空才继续重连逻辑。
+   */
+  async function warmupWait(devices: { serial: string; state: string }[], signal?: AbortSignal) {
+    if (devices.some((d) => d.state === 'device')) return devices
+    // 仅首个动作付一次"等 daemon 发现"的代价，避免每次动作都拖慢；
+    // 注入 runner（离线测试）时不等待，保持测试确定性/速度。
+    if (warmupDone || opts.runner) return devices
+    warmupDone = true
+    await run(['mdns', 'check'], signal).catch(() => undefined)
+    let cur = devices
+    for (let i = 0; i < 3; i++) {
+      await sleep(500)
+      cur = await listDevices(signal)
+      if (cur.some((d) => d.state === 'device')) return cur
+    }
+    return cur
+  }
+
   async function ensureConnected(signal?: AbortSignal): Promise<void> {
-    const devices = await listDevices(signal)
+    let devices = await listDevices(signal)
+    devices = await warmupWait(devices, signal)
     learnMdnsSerial(devices)
     if (resolvedSerial) {
       if (devices.some((x) => x.serial === resolvedSerial && x.state === 'device')) {

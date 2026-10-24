@@ -231,6 +231,7 @@
 - **真机实证**：旧 host:port → 自动切到 `adb-..._adb-tls-connect._tcp`；probe TB321FU/Android16/canScreenshot；`captureEvidence` 落 dump+脱敏截图（1600×2560 合法 PNG）。
 - **验证**：`device-p2` +2 例（28 tests 全绿）；`pnpm check` 全绿。
 - **备注**：本机 adb 冷启动需 `adb start-server`+`adb mdns check` 才出现无线设备（环境侧）。
+- **追加修复**：真机首次动作常报"未检测到设备"——daemon 冷启动首帧 `adb devices` 为空。已在 `ensureConnected` 加**一次**预热等待（`mdns check`+3×500ms 轮询，注入 runner 时跳过）。真机验证 `probe`/`selfCheck` 正常（TB321FU/16/dump OK/截屏 1.3MB PNG）；`runCompare` 能正常启动，但本轮真机前台被**饿了么登录页**遮挡 + 美团搜索入口点击未跳转，故只验证到导航阶段，未做任何支付相关操作。
 
 
 ---
