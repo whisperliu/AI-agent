@@ -17,7 +17,7 @@ export type ConfigInput = Infer<typeof Config>
 | `device.driver` | `'mock' \| 'adb'` | `mock` | P1 先 mock；P2 切 `adb` 上真机 |
 | `device.serial` | string | `auto` | `auto`=唯一在线设备；或 `host:port` / 序列号 |
 | `device.adbPath` | string | `adb` | adb 可执行文件路径（无系统 adb 时填 platform-tools 绝对路径） |
-| `device.autoReconnect` | boolean | `true` | 掉线自动 `adb connect` 重连一次（§8.3） |
+| `device.autoReconnect / unicodeIme` | boolean | `true` | 掉线自动 `adb connect` 重连一次（§8.3） |
 | `task.stepTimeoutMs` / `pageTimeoutMs` / `taskTimeoutMs` | natural | 8000 / 20000 / 90000 | 三级超时 |
 | `task.idempotencyTtlMinutes` | natural | 30 | 幂等保留期（§7.6） |
 | `evidence.ttlMinutes` | natural | 10 | 证据有效期（§6.5） |

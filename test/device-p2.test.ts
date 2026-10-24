@@ -228,6 +228,40 @@ function fakeAdbRunner(state: FakeAdbState): AdbRunner {
   }
 }
 
+test('adb driver: unicode input temporarily switches IME, broadcasts text, then restores IME', async () => {
+  const calls: string[][] = []
+  const runner: AdbRunner = async (argv) => {
+    calls.push(argv)
+    let a = argv.slice()
+    if (a[0] === '-s') a = a.slice(2)
+    if (a[0] === 'devices')
+      return { code: 0, stdout: 'List of devices attached\n1.1.1.1:5555\tdevice\n', stderr: '' }
+    if (a[0] === 'shell' && a[1] === 'settings' && a[2] === 'get')
+      return {
+        code: 0,
+        stdout: 'com.sohu.inputmethod.sogou.oem/com.sohu.inputmethod.sogou.SogouIME\n',
+        stderr: '',
+      }
+    // uiautomator dump for tap() focus
+    if (a[0] === 'exec-out' && a[1] === 'uiautomator')
+      return { code: 0, stdout: settleXml, stderr: '' }
+    return { code: 0, stdout: '', stderr: '' }
+  }
+  const d = createAdbDriver({
+    serial: '1.1.1.1:5555',
+    runner,
+    unicodeIme: 'com.android.adbkeyboard/.AdbIME',
+  })
+  await d.input({ resourceId: 'com.sankuai.meituan:id/payable' }, '香叶烤鸭饭')
+  const flat = calls.map((c) => c.join(' '))
+  assert.ok(flat.some((c) => c.includes('ime enable com.android.adbkeyboard')))
+  assert.ok(flat.some((c) => c.includes('ime set com.android.adbkeyboard')))
+  assert.ok(flat.some((c) => c.includes('ADB_INPUT_TEXT') && c.includes('香叶烤鸭饭')))
+  // 末尾必须切回原输入法
+  assert.ok(flat.some((c) => c.includes('ime set com.sohu.inputmethod.sogou.oem')))
+  assert.ok(!flat.some((c) => c.includes('input text')), 'must not use input text for unicode')
+})
+
 test('adb driver: falls back to --compressed dump when standard dump is empty (real heavy page)', async () => {
   // 模拟：标准 dump 与 /dev/tty 均为空，只有 --compressed 产物有效（美团搜索结果页实测）。
   const state: FakeAdbState = {

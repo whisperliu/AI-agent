@@ -362,6 +362,18 @@
 
 ---
 
+### [29] 2026-10-24 14:08 · P3 中文输入闭环：adb.input 自动切换 Unicode IME
+- **为什么**：中文搜索词无法用 `adb shell input text` 注入（搜狗输入法下 NPE/不落框）；不能把用户平板输入法永久改成 ADBKeyboard。
+- **做了什么**：
+  1. `device/adb.ts` 增配置 `unicodeIme`：`input()` 在提供该 IME 时**临时 `ime set` → `am broadcast ADB_INPUT_TEXT --es msg` 注入 → `finally` 切回原 IME**；未提供则仍走 `input text`。`finally` 保证异常也恢复原输入法。
+  2. `config.ts` 增 `device.unicodeIme`（默认空=不用）；`core/container.ts` 透传。
+  3. 新增回归测试：断言调用序列含 `ime enable/set`、`ADB_INPUT_TEXT`、末尾 **切回原 IME**，且**不出现** `input text`。
+  4. 真机侧已把平板输入法切回原搜狗并确认恢复。
+- **验证方式**：`pnpm check` **96/96 全绿**；真机此前用同款广播已成功把"香叶烤鸭饭"写入搜索框。
+- **更新后状态**：中文输入可在驱动层闭环，用户平板的输入法不被长期改动（需手动安装 ADBKeyboard 并在配置填 `unicodeIme` 才启用）。
+
+---
+
 ---
 
 ## 追加条目的模板（供后续每轮使用）
@@ -377,4 +389,4 @@
 
 ---
 
-*最后更新：2026-10-24 14:02 +08:00*
+*最后更新：2026-10-24 14:08 +08:00*

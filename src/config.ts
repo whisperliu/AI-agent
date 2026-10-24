@@ -16,6 +16,8 @@ export const Config = z.object({
       adbPath: z.string().default('adb'),
       /** 掉线时自动 `adb connect` 重连一次（§8.3）。 */
       autoReconnect: z.boolean().default(true),
+      /** Unicode 输入辅助 IME（中文输入用；如 ADBKeyboard 的 com.android.adbkeyboard/.AdbIME）。空=不用。 */
+      unicodeIme: z.string().default(''),
     })
     .default({ driver: 'mock', serial: 'auto', adbPath: 'adb', autoReconnect: true }),
   task: z

@@ -41,6 +41,12 @@ export interface AdbDriverOptions {
   runner?: AdbRunner
   /** 掉线时自动重连一次（§8.3）。 */
   autoReconnect?: boolean
+  /**
+   * 中文/Unicode 输入辅助 IME 的组件名（如 ADBKeyboard 的 `com.android.adbkeyboard/.AdbIME`）。
+   * 提供时：input() 会**临时切到该 IME → ADB_INPUT_TEXT 广播注入 → 切回原 IME**，
+   * 解决 `input text 中文` 在第三方输入法下 NPE/不落框的问题。缺省则走 `input text`。
+   */
+  unicodeIme?: string
 }
 
 /** `Driver` + P2 额外能力（连接管理 / 能力探测）。 */
@@ -91,6 +97,7 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
   const adbPath = opts.adbPath ?? DEFAULT_ADB
   const run = opts.runner ?? defaultRunner(adbPath)
   const autoReconnect = opts.autoReconnect ?? true
+  const unicodeIme = opts.unicodeIme
   const tmpDir = opts.tmpDir ?? join(tmpdir(), 'price-agent-adb')
   const allowAuto = opts.serial === 'auto' || opts.serial === ''
   const GLOBAL_CMDS = new Set([
@@ -202,6 +209,19 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
 
   async function input(sel: UiSelector, text: string, signal?: AbortSignal): Promise<void> {
     await tap(sel, signal) // 先聚焦输入框
+    if (text && unicodeIme) {
+      // Unicode 输入：临时切 IME → 广播注入 → 切回原 IME。
+      const cur = await adb(['shell', 'settings', 'get', 'secure', 'default_input_method'], signal)
+      const prev = (cur.stdout || '').trim()
+      try {
+        await adb(['shell', 'ime', 'enable', unicodeIme], signal)
+        await adb(['shell', 'ime', 'set', unicodeIme], signal)
+        await adb(['shell', 'am', 'broadcast', '-a', 'ADB_INPUT_TEXT', '--es', 'msg', text], signal)
+      } finally {
+        if (prev && prev !== unicodeIme) await adb(['shell', 'ime', 'set', prev], signal)
+      }
+      return
+    }
     const escaped = text.replace(/ /g, '%s').replace(/([\\'"&<>|;$`()])/g, '\\$1')
     const r = await adb(['shell', 'input', 'text', escaped], signal)
     if (r.code !== 0) throw new Error(`input text 失败：${r.stderr.trim()}`)
