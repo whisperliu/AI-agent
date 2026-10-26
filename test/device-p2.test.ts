@@ -814,3 +814,67 @@ test('assertUsableWindow: split-screen → NeedsHumanError(environment); fullscr
   // Mock（无 geometry 能力）→ 跳过
   await assertUsableWindow({} as unknown as Driver)
 })
+
+// ── 掉线硬超时（回归：设备中途掉线不得让任务无限挂起）──────────────
+test('adb driver: hung adb command (device dropped) rejects via stepTimeout, does not hang forever', async () => {
+  // 模拟无线调试中途掉线：adb 命令一直不返回，只在被 abort 时才结束（真实 adb 卡住的行为）。
+  const runner: AdbRunner = (argv, signal) => {
+    let a = argv.slice()
+    if (a[0] === '-s') a = a.slice(2)
+    if (a[0] === 'devices')
+      return Promise.resolve({
+        code: 0,
+        stdout: 'List of devices attached\n1.1.1.1:5555\tdevice\n',
+        stderr: '',
+      })
+    // 其余命令（如 uiautomator dump / screencap）挂起，仅在 abort 时 reject。
+    return new Promise((_resolve, reject) => {
+      const onAbort = () => reject(new Error('aborted (device offline)'))
+      if (signal) {
+        if (signal.aborted) onAbort()
+        else signal.addEventListener('abort', onAbort, { once: true })
+      }
+    })
+  }
+  const d = createAdbDriver({
+    serial: '1.1.1.1:5555',
+    runner,
+    stepTimeoutMs: 120,
+    disableAnimations: false,
+  })
+  const t0 = Date.now()
+  // dump 内层单独 120ms 超时 × 4 次重试 + 3×500ms 退避 ≈ 2s 内必须失败，绝不可无限挂起。
+  await assert.rejects(
+    () => d.dump(),
+    (e: Error) => /timeout|超时/.test(e.message),
+  )
+  const elapsed = Date.now() - t0
+  assert.ok(elapsed < 4000, `应在有限时间内失败（实际 ${elapsed}ms）`)
+})
+
+test('adb driver: stepTimeout wraps every command including screencap', async () => {
+  let abortables = 0
+  const runner: AdbRunner = (argv, signal) => {
+    let a = argv.slice()
+    if (a[0] === '-s') a = a.slice(2)
+    if (a[0] === 'devices')
+      return Promise.resolve({
+        code: 0,
+        stdout: 'List of devices attached\n1.1.1.1:5555\tdevice\n',
+        stderr: '',
+      })
+    abortables++
+    return new Promise((_r, reject) => {
+      if (signal)
+        signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+    })
+  }
+  const d = createAdbDriver({
+    serial: '1.1.1.1:5555',
+    runner,
+    stepTimeoutMs: 80,
+    disableAnimations: false,
+  })
+  await assert.rejects(() => d.screencap(), /timeout|超时/)
+  assert.ok(abortables >= 1, 'screencap 命令应被摘时中止')
+})

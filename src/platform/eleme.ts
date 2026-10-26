@@ -10,7 +10,7 @@
 import type { ComparisonConditions } from '../price/model.ts'
 import type { Driver } from '../device/driver.ts'
 import { enterViaOpenTag, SETTLE_ANCHOR } from './extract.ts'
-import { assertUsableWindow, createNavigator, ensureAppForeground } from './navigator.ts'
+import { assertUsableWindow, ensureAppForeground } from './navigator.ts'
 import { runElemeReal } from './elemeReal.ts'
 import { GENERIC_SETTLE_SELECTORS } from './selectors/generic.ts'
 import type { PlatformEnterContext, PlatformStrategy, RawQuoteFacts } from './types.ts'
@@ -35,7 +35,7 @@ export const eleme: PlatformStrategy = {
       // 关键：先把饿了么拉到前台（此前缺失 → 前台是别的 App/桌面时必然超时）。
       await ensureAppForeground(driver, 'me.ele')
       // 饿了么为 canvas 自绘，控件树不可读 → 真机走 OCR 兜底（需要 ctx.ocr）。
-      return runElemeReal(createNavigator(driver), cond, ctx)
+      return runElemeReal(driver, cond, ctx)
     }
     return enterViaOpenTag(driver, 'eleme', cond)
   },

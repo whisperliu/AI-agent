@@ -14,12 +14,15 @@
 import type { UiNode } from '../device/uixml.ts'
 import { parseUiNodes } from '../device/uixml.ts'
 import type { UiSelector } from '../device/driver.ts'
+import type { Driver } from '../device/driver.ts'
 import type { ComparisonConditions, DiscountKind, FeeKind, OptionalSaving } from '../price/model.ts'
-import type { OcrWord } from '../ocr/reader.ts'
+import type { Ocr, OcrWord } from '../ocr/reader.ts'
 import { itemScore } from '../price/similarity.ts'
 import { ELEME_SELECTORS } from './selectors/eleme.ts'
 import type { Navigator } from './navigator.ts'
-import { ensureHome } from './navigator.ts'
+import { createNavigator, ensureHome } from './navigator.ts'
+import { createOcrNav } from './ocrNav.ts'
+import { NeedsHumanError, ForbiddenActionError } from '../core/errors.ts'
 import {
   amountFromRow,
   amountLeftOfAnchor,
@@ -363,8 +366,18 @@ export function ocrMoney(t: string | undefined): number {
   return Number.isFinite(n) ? n : Number.NaN
 }
 
-/** 在一组 OCR 词里找"标签词"右侧同一行最近的金额词（OCR 无精确 bounds，按 y 与 x 就近）。 */
-function ocrAmountRightOf(words: OcrWord[], labelRe: RegExp): { amount: number; conf: number } {
+/**
+ * 在一组 OCR 词里找"标签词"右侧同一行的金额词（OCR 无精确 bounds，按 y 与 x 就近）。
+ *
+ * `prefer='right'`：取行内**最右**金额 —— 用于「实付/合计」这类**汇总行**。饿了么真机实测：
+ * `合计  已优惠¥25.92  ¥16.98`，最左是"已优惠"金额（**不是实付**）、最右才是实付。
+ * 早期实现取最左，把 ¥16.98 的实付误读成 ¥25.92（真机复测抓到的 bug）。
+ */
+function ocrAmountRightOf(
+  words: OcrWord[],
+  labelRe: RegExp,
+  prefer: 'left' | 'right' = 'left',
+): { amount: number; conf: number } {
   const labels = words.filter((w) => labelRe.test(w.t))
   for (const lab of labels) {
     const ly = lab.bbox.y + lab.bbox.h / 2
@@ -376,7 +389,7 @@ function ocrAmountRightOf(words: OcrWord[], labelRe: RegExp): { amount: number; 
         const y = w.bbox.y + w.bbox.h / 2
         return Math.abs(y - ly) <= 26 && w.bbox.x >= lx1 - 10
       })
-      .sort((a, b) => a.bbox.x - b.bbox.x)
+      .sort((a, b) => (prefer === 'right' ? b.bbox.x - a.bbox.x : a.bbox.x - b.bbox.x))
     for (const c of cands) {
       const v = ocrMoney(c.t)
       if (Number.isFinite(v)) return { amount: v, conf: c.c }
@@ -433,9 +446,9 @@ export function extractElemeSettleFromOcr(
   cond: ComparisonConditions,
   ocrText = '',
 ): RawQuoteFacts {
-  // 实付：优先「实付/合计/应付/立即支付」，其次"共减"左侧金额。
-  let pay = ocrAmountRightOf(words, /^(实付|合计|应付|待支付|实付款)$/)
-  if (!Number.isFinite(pay.amount)) pay = ocrAmountRightOf(words, /支付$/)
+  // 实付：优先「实付/合计/应付/待支付」，其次"立即支付 ¥"。汇总行取**最右**金额（避开"已优惠¥X"）。
+  let pay = ocrAmountRightOf(words, /^(实付|合计|应付|待支付|实付款)$/, 'right')
+  if (!Number.isFinite(pay.amount)) pay = ocrAmountRightOf(words, /支付$/, 'right')
   if (!Number.isFinite(pay.amount)) {
     // 变体 B：找"共减"左侧最近金额。
     const gong = words.find((w) => w.t.includes('共减') || w.t === '减')
@@ -527,23 +540,238 @@ export function extractElemeSettleFromOcr(
 }
 
 /**
+ * 饿了么真机**布局参数**（固定 1600×2560 竖屏平板校准，2026-10-26 真机实测）。
+ * 纯数据、可被测试覆盖；换机型需按 `.price-agent/evidence/auto-*.png` 重新校准。
+ */
+export const ELEME_LAYOUT = {
+  homeSearch: { x: 800, y: 312 }, // 首页顶部搜索框
+  searchInput: { x: 735, y: 128 }, // 搜索页输入框
+  storeFirstDishSpec: { x: 1490, y: 1242 }, // 店铺页首个菜「选规格」按钮
+  pickDone: { x: 800, y: 2432 }, // 规格弹窗底部「选好了」
+  goSettle: { x: 1453, y: 2432 }, // 店铺页底部「去结算」
+  enterKey: 66, // ENTER：提交搜索
+} as const
+
+/** 是否具备 OCR 盲导航所需能力（真机 adb：tapPoint + inputText + key + screencap）。 */
+export function supportsOcrNav(driver: Driver): boolean {
+  return (
+    typeof driver.tapPoint === 'function' &&
+    typeof driver.inputText === 'function' &&
+    typeof driver.key === 'function'
+  )
+}
+
+const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/** 菜单区（店铺页菜品列表）的屏幕 y 范围，用于把促销/顶部元素挡在外面。 */
+const MENU_Y_MIN = 850
+const MENU_Y_MAX = 2400
+
+/**
+ * 在店铺页 OCR 词里，定位"首个菜品价格行"的屏幕 y（价格形态如 `¥29.88`）。
+ * ⚠️ 只在**菜单列表区**取（y>850，跳过顶部"超级吃货卡¥15/满减券¥20"等促销价——它们在 y<700）。
+ * 历史上把下界写成 1150，会漏掉**前两道菜**（首个菜价常在 y≈950）、误取第三道菜（2026-10-26 真机踩到）。
+ */
+export function locateFirstDishY(words: OcrWord[], fallback: number): number {
+  const priceRe = /[¥￥]\s*\d+(?:\.\d{1,2})?|^\d+\.\d{2}$/
+  const cands = words
+    .filter((w) => priceRe.test(w.t.replace(/\s/g, '')) && w.bbox.y > MENU_Y_MIN && w.bbox.y < 2350)
+    .map((w) => Math.round(w.bbox.y + w.bbox.h / 2))
+    .sort((a, b) => a - b)
+  return cands[0] ?? fallback
+}
+
+/**
+ * 定位首个菜品「选规格」按钮的屏幕 y。**优先用"选规格"文案本身**（比价格行更准：价格行常带
+ * 「预估到手 ¥xx」副行易漂移；「选规格」按钮与菜品行垂直居中，命中即对）。找不到时退回价格行定位。
+ */
+export function locateFirstDishSpecY(words: OcrWord[], fallbackY: number): number {
+  const specs = words
+    .filter((w) => /^选规格$/.test((w.t || '').trim()))
+    .map((w) => Math.round(w.bbox.y + w.bbox.h / 2))
+    .filter((y) => y > MENU_Y_MIN && y < MENU_Y_MAX)
+    .sort((a, b) => a - b)
+  if (specs.length > 0) return specs[0]!
+  return locateFirstDishY(words, fallbackY)
+}
+
+/**
+ * 判定当前是否落在「拼单详情」页（饿了么拼单）。
+ *
+ * 背景（2026-10-26 真机定位）：当某商品已存在**进行中的拼单**时，在店铺页点该菜的「选规格」
+ * 不会弹规格弹窗，而是直接进「拼单详情」（`拼单 / 邀请好友 / 发起 / 取消拼单`，且**没有**
+ * `份量 / 辣度 / 选好了`）。此时绝不能继续盲点：一直重试只会反复进拼单页、甚至把更多菜加进拼单
+ * （真机曾一次误加 3 个菜）。识别到即如实交人工（NeedsHuman），不自动取消他人拼单。
+ */
+export function isGroupOrderPage(words: OcrWord[]): boolean {
+  const t = words.map((w) => w.t || '').join('')
+  // 用**拼单详情页独有**的强标记；注意**不能**用"拼单进行中"——它是店铺页的入口按钮，店铺页常有。
+  const hasGroupPage = /邀请好友|取消拼单|一号发起人|拼单专属|修改商品|帮好友点/.test(t)
+  const hasSpec = /份量|辣度|选好了|数量/.test(t)
+  return hasGroupPage && !hasSpec
+}
+
+/**
+ * 饿了么 OCR 盲导航**单次尝试**（一次完整走查）。任何一步 OCR 等待超时即抛出，
+ * 由 `runElemeOcrNav` 捕获后**整条重试**（比"等待失败仍盲点"稳：一旦某步错位，后面全乱）。
+ * 每次 `look()` 内以 OCR 文本拦验证码/登录（canvas 控件树无文字，这是唯一有效防线）。
+ */
+async function runElemeOcrOnce(
+  driver: Driver,
+  ocr: Ocr,
+  cond: ComparisonConditions,
+): Promise<RawQuoteFacts> {
+  const nav = createOcrNav(driver, ocr)
+  const L = ELEME_LAYOUT
+  const allText = (ws: OcrWord[]) => ws.map((w) => w.t).join('')
+
+  // 1) 强制重启饿了么回首页（避开上次页面残留）。
+  if (driver.launchApp) await driver.launchApp('me.ele', { force: true })
+  await sleepMs(3500)
+  let words = await nav.waitFor(
+    (ws) => /推荐|美食外卖|搜索|点外卖/.test(allText(ws)),
+    '饿了么首页',
+    10000,
+  )
+
+  // 2) 首页 → 点搜索框 → 搜索页。
+  await nav.tapAt(words, L.homeSearch, '首页搜索框')
+  await sleepMs(2000)
+  words = await nav.waitFor((ws) => /历史搜索|搜索发现|搜索/.test(allText(ws)), '搜索页', 6000)
+
+  // 3) 点输入框 → 注入菜品关键词 → ENTER 提交。
+  await nav.tapAt(words, L.searchInput, '搜索输入框')
+  await sleepMs(800)
+  await nav.typeText(cond.item)
+  await sleepMs(1200)
+  await nav.key(L.enterKey)
+  await sleepMs(3500)
+  words = await nav.waitFor(
+    (ws) => /销量|综合|起送|预估|月售|木桶|小炒|店/.test(allText(ws)),
+    '搜索结果页',
+    8000,
+  )
+
+  // 4) 点第一家店（店铺标题坐标）。
+  await nav.tapAt(words, { x: 342, y: 400 }, '第一家店')
+  await sleepMs(3500)
+  words = await nav.waitFor(
+    (ws) => /点餐|公告|选规格|预估|去结算/.test(allText(ws)),
+    '店铺页',
+    8000,
+  )
+
+  // 4.5) 店铺页状态守卫：若该商品已存在**进行中的拼单**，点「选规格」会直接进「拼单详情」而非规格弹窗；
+  //      此时继续盲点只会反复进拼单页、甚至把更多菜加进拼单（真机曾误加 3 个菜）。识别到即交人工，不自动取消拼单。
+  //      （注：配送方式「外送/自取」仅靠 OCR 文本无法可靠区分——两 tab 文案一直都在，高亮色不在 OCR 内，
+  //        故不做 OCR 层面的自取拦截；改为在**结算页**按实际费用（配送费/打包费）自然反映。）
+  if (isGroupOrderPage(words)) {
+    throw new NeedsHumanError(
+      'environment',
+      '该商品存在进行中的拼单，点「选规格」会进入拼单详情而非规格弹窗；请先在饿了么取消/完成该拼单后重试',
+    )
+  }
+
+  // 5) 加购：点首个菜「选规格」→ 弹窗「选好了」。
+  //    ⚠️ 红线：**只点一次**。点多个候选 y 会把不同菜品逐个加进购物车（真机踩过：一次误加 3 个菜）——
+  //    加购是有副作用、非幂等的操作。故这里只按"首个菜品行"点一次，且**必须等到规格弹窗**，
+  //    否则如实失败（宁可返回低置信/让他人复核，也绝不乱加菜）。
+  const specY = locateFirstDishSpecY(words, L.storeFirstDishSpec.y)
+  await nav.tapAt(words, { x: L.storeFirstDishSpec.x, y: specY }, '首个菜-选规格')
+  await sleepMs(2200)
+  // 点完「选规格」若落到拼单详情页（无规格弹窗、有「拼单/邀请好友」）→ 立即交人工，绝不重试盲点。
+  words = await nav.look()
+  if (isGroupOrderPage(words)) {
+    throw new NeedsHumanError(
+      'environment',
+      '点「选规格」后进入「拼单详情」而非规格弹窗（该菜已在拼单中）；请先在饿了么取消/完成该拼单后重试',
+    )
+  }
+  words = await nav.waitFor((ws) => /份量|辣度|选好了|数量/.test(allText(ws)), '规格弹窗', 6000)
+  await nav.tapAt(words, L.pickDone, '选好了')
+  await sleepMs(2200)
+
+  // 6) 去结算（按钮文案在真机上是「领券结算 / 去结算」，都有"结算"）。
+  words = await nav.waitFor((ws) => /结算|购物车|券后/.test(allText(ws)), '购物车栏', 6000)
+  await nav.tapAt(words, L.goSettle, '去结算')
+  await sleepMs(4000)
+
+  // 7) 结算页 → OCR 读实付（绝不点「支付」）。
+  words = await nav.waitFor(
+    (ws) => /合计|实付|配送费|打包费|支付/.test(allText(ws)),
+    '结算页',
+    8000,
+  )
+  // 守卫：「拼单详情」页同样有「合计/去结算」，若误入会把这**整单拼单总额**当成本菜实付 → 必须拦住不读。
+  if (isGroupOrderPage(words)) {
+    throw new NeedsHumanError(
+      'environment',
+      '进入了「拼单详情」页（合计为整单拼单金额，非本菜实付）；请先在饿了么取消/完成该拼单后重试',
+    )
+  }
+  const facts = extractElemeSettleFromOcr(words, cond, allText(words))
+  if (!Number.isFinite(facts.payable)) throw new Error('结算页 OCR 未读到实付')
+  try {
+    facts.screenshot = await driver.screencap()
+  } catch {
+    /* 截屏失败不影响读数 */
+  }
+  facts.ocrWords = words
+  return facts
+}
+
+/**
+ * 饿了么 OCR 盲导航主流程：整体最多尝试 `attempts` 次（每次都是完整走查）。
+ * 验证码/登录/支付红线**立即上抛**（绝不重试）；其它失败（OCR 抖动/页面未就绪）改进程内重试。
+ */
+export async function runElemeOcrNav(
+  driver: Driver,
+  ocr: Ocr,
+  cond: ComparisonConditions,
+  attempts = 3,
+): Promise<RawQuoteFacts> {
+  let lastErr: unknown
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await runElemeOcrOnce(driver, ocr, cond)
+    } catch (err) {
+      if (err instanceof NeedsHumanError || err instanceof ForbiddenActionError) throw err
+      lastErr = err
+      await sleepMs(500)
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('饿了么 OCR 盲导航失败')
+}
+
+/**
  * 真机走查：首页 → 搜索 item → 选第一家店 → 加购 → 进结算 → 读实付。
- * 与美团同构（复用 navigator 原语）；超时 → StateAssertionError；验证码/登录 → NeedsHumanError。
+ *
+ * 饿了么整 App 为 canvas/TMS 自绘，`uiautomator` 无控件可点 → 真机优先走 **OCR 盲导航**
+ * （`runElemeOcrNav`：截图→OCR 定位→坐标点按，全程用 OCR 做支付红线拦截）。能力不足或失败时
+ * 回退旧的 navigator 路径（对旧机型/非 canvas 版本仍有用）。
+ * 超时 → StateAssertionError；验证码/登录 → NeedsHumanError。
  */
 export async function runElemeReal(
-  nav: Navigator,
+  driver: Driver,
   cond: ComparisonConditions,
   ctx?: PlatformEnterContext,
 ): Promise<RawQuoteFacts> {
-  const byId = (ids: string[]): UiSelector[] => ids.map((id) => ({ resourceId: id }))
+  const nav = createNavigator(driver)
   const settle = elemeAnchors()
   const settleRightPanel = [...settle, { resourceId: 'tms_fragment_container' }]
 
   // 已在结算页 → 直接读（控件树优先，读不到则 OCR），零点击（最安全路径）。
+  // 注意：`tryReadSettle` 在"锚点命中但读不到实付"时会返回 payable=NaN 的对象，**不能当已读成功**。
   const already = await tryReadSettle(nav, cond, ctx, settleRightPanel, 1500)
-  if (already) return already
+  if (already && Number.isFinite(already.payable)) return already
 
-  // 导航（饿了么为 canvas 自绘，按 resourceId 锚点 + 坐标点击；文案锚点在 dump 里通常不存在）。
+  // canvas 自绘 → OCR 盲导航（真机 + 已注入 OCR）。失败则如实抛出（旧 navigator 路径对 canvas 无效）。
+  if (supportsOcrNav(driver) && ctx?.ocr) {
+    return runElemeOcrNav(driver, ctx.ocr, cond)
+  }
+
+  // 回退：导航（按 resourceId 锚点 + 坐标点击；文案锚点在 dump 里通常不存在）。
+  const byId = (ids: string[]): UiSelector[] => ids.map((id) => ({ resourceId: id }))
   await ensureHome(nav, byId(ELEME_SELECTORS.homeAnchors), { appId: 'me.ele' })
   await nav.tap({ resourceId: ELEME_SELECTORS.searchEntry[0]! }, '搜索入口')
   await nav.waitAny(byId([ELEME_SELECTORS.searchInput[0]!]), '搜索页')

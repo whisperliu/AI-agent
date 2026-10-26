@@ -425,3 +425,35 @@ test('settlePanelRoi: 从 tms_fragment_container bounds 取右栏 ROI', () => {
   const roi = settlePanelRoi(parseUiNodes(xml))
   assert.deepEqual(roi, { x: 1280, y: 0, w: 1280, h: 1570 })
 })
+
+test('eleme OCR 抽取：真机结算页 fixture —— 实付取「合计」右侧最终价，不误取「已优惠¥25.92」（回归）', async () => {
+  const raw = JSON.parse(await readFile(join(FIX, 'eleme-confirm.real-ocr.json'), 'utf8')) as {
+    words: {
+      text: string
+      confidence: number
+      bbox: { x0: number; y0: number; x1: number; y1: number }
+    }[]
+  }
+  const words: OcrWord[] = raw.words.map((w) => ({
+    t: w.text,
+    c: w.confidence / 100,
+    bbox: { x: w.bbox.x0, y: w.bbox.y0, w: w.bbox.x1 - w.bbox.x0, h: w.bbox.y1 - w.bbox.y0 },
+  }))
+  const facts = extractElemeSettleFromOcr(words, cond({ item: '红烧肉木桶饭' }), 'ocr')
+  // 真机实测：合计行 "已优惠¥25.92  ¥16.98"，实付应为最右侧 16.98（早期实现取最左 → 误得 25.92）。
+  assert.equal(facts.payable, 16.98, '实付必须是合计行最右金额 16.98，而不是已优惠 25.92')
+  const packing = facts.fees.find((f) => f.kind === 'packing')?.amount
+  const delivery = facts.fees.find((f) => f.kind === 'delivery')?.amount
+  const goods = facts.fees.find((f) => f.kind === 'goods')?.amount
+  assert.equal(packing, 2)
+  assert.equal(delivery, 3)
+  assert.equal(goods, 14.98)
+  const waiver = facts.discounts.find((d) => d.kind === 'delivery_waiver')
+  assert.ok(waiver && waiver.alreadyIncludedInPayable)
+  assert.equal(waiver!.amount, 3)
+  const expected = (goods ?? 0) + (packing ?? 0) + (delivery ?? 0) - waiver!.amount
+  assert.ok(
+    Math.abs(expected - facts.payable) < 0.001,
+    `算术应平账：${expected} vs ${facts.payable}`,
+  )
+})

@@ -114,6 +114,42 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
 }
 
+/**
+ * 给一条 `adb` 命令加**硬超时**（返回超时抛错 + 中止底层子进程）。
+ *
+ * 背景（真机教训 2026-10-26）：`runNativeCommand` 只是 `execFile` 包一层、**没有默认超时**，
+ * 而 `task.stepTimeoutMs` 之前配了却**没被使用** → 设备无线调试中途掉线时，单条 `adb` 命令
+ * （screencap/dump/pull 等）会一直挂起，`waitFor` 的"两次 look 之间查时钟"兜不住，整个比价任务
+ * **无限挂起**（真机实测触发）。此处以注入的 `stepTimeoutMs` 兜底：每条命令到点即中止并抛可读超时，
+ * 让上层（`runElemeOcrNav` 的 attempts/重试或 `retry.ts`）能感知并重试/失败，而不是卡死。
+ */
+/**
+ * 给一条 `adb` 命令加**硬超时**：复用平台原语 `AbortSignal.timeout` / `AbortSignal.any` 组合出
+ * "调用方 signal 或超时" 的合并 signal，交给 `runNativeCommand`（它负责在 abort 时杀子进程）。
+ * 本函数**不自造 spawn/定时器**（§2.2），只做信号组合与超时错误语义映射。
+ *
+ * 背景（真机教训 2026-10-26）：`runNativeCommand` 是 `execFile` 包一层、**没有默认超时**，
+ * 而 `task.stepTimeoutMs` 之前配了却**没被使用** → 设备无线调试中途掉线时，单条 `adb` 命令
+ * （screencap/dump/pull 等）会一直挂起，`waitFor` 的"两次 look 之间查时钟"兜不住，整个比价任务
+ * **无限挂起**（真机实测触发）。此处以 `stepTimeoutMs` 兜底：到点中止并抛 `timeout` 语义错误，
+ * 让上层（`runElemeOcrNav` 重试或 `retry.ts` 的 `isRetryable`）能感知并重试/失败，而不是卡死。
+ */
+function withDeadline<T>(
+  signal: AbortSignal | undefined,
+  ms: number,
+  fn: (s: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const timeoutSignal = AbortSignal.timeout(ms)
+  const merged = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
+  return fn(merged).catch((err) => {
+    // 仅当"是超时、且非调用方主动取消"时，统一成可重试的 timeout 语义。
+    if (timeoutSignal.aborted && !signal?.aborted) {
+      throw new Error(`adb 命令超时 timeout（>${ms}ms，设备可能掉线）`)
+    }
+    throw err
+  })
+}
+
 /** 创建 adb 驱动。 */
 export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
   const adbPath = opts.adbPath ?? DEFAULT_ADB
@@ -121,6 +157,8 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
   const autoReconnect = opts.autoReconnect ?? true
   const unicodeIme = opts.unicodeIme
   const disableAnimations = opts.disableAnimations ?? true
+  /** 单条 adb 命令的硬超时（设备掉线兜底），默认 8s（同 config.task.stepTimeoutMs）。 */
+  const stepTimeout = opts.stepTimeoutMs ?? 8000
   let animationsDisabled = false
   const tmpDir = opts.tmpDir ?? join(tmpdir(), 'price-agent-adb')
   const allowAuto = opts.serial === 'auto' || opts.serial === ''
@@ -146,11 +184,13 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
   /** 执行 `adb <argv>`（自动前置 `-s <serial>`，全局命令除外）。 */
   async function adb(argv: string[], signal?: AbortSignal): Promise<AdbExecResult> {
     const needSerial = resolvedSerial && !GLOBAL_CMDS.has(argv[0] ?? '')
-    return run(needSerial ? ['-s', resolvedSerial!, ...argv] : argv, signal)
+    const cmd = needSerial ? ['-s', resolvedSerial!, ...argv] : argv
+    // 每条命令都过 stepTimeoutMs 硬超时（见 withDeadline 注释）：设备掉线时不再无限挂起。
+    return withDeadline(signal, stepTimeout, (s) => run(cmd, s))
   }
 
   async function listDevices(signal?: AbortSignal): Promise<{ serial: string; state: string }[]> {
-    const r = await run(['devices'], signal)
+    const r = await withDeadline(signal, stepTimeout, (s) => run(['devices'], s))
     if (r.code !== 0) throw new Error(`adb devices 失败：${r.stderr.trim() || r.code}`)
     const out: { serial: string; state: string }[] = []
     for (const line of r.stdout.split('\n')) {
@@ -183,7 +223,7 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
    * 手机重启后端口会变，配置里的旧 `host:port` 失效；mDNS 能拿到当前端口。
    */
   async function discoverMdnsAddress(signal?: AbortSignal): Promise<string | undefined> {
-    const r = await run(['mdns', 'services'], signal)
+    const r = await withDeadline(signal, stepTimeout, (s) => run(['mdns', 'services'], s))
     if (r.code !== 0) return undefined
     for (const line of r.stdout.split('\n')) {
       const parts = line.trim().split(/\s+/)
@@ -205,7 +245,7 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
     // 注入 runner（离线测试）时不等待，保持测试确定性/速度。
     if (warmupDone || opts.runner) return devices
     warmupDone = true
-    await run(['mdns', 'check'], signal).catch(() => undefined)
+    await withDeadline(signal, stepTimeout, (s) => run(['mdns', 'check'], s)).catch(() => undefined)
     let cur = devices
     for (let i = 0; i < 3; i++) {
       await sleep(500)
@@ -244,7 +284,7 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
       const candidates = [resolvedSerial, ...(mdnsSerial ? [mdnsSerial] : [])]
       let lastStderr = ''
       for (const cand of candidates) {
-        const c = await run(['connect', cand], signal)
+        const c = await withDeadline(signal, stepTimeout, (s) => run(['connect', cand], s))
         lastStderr = c.stderr.trim()
         const again = await listDevices(signal)
         if (again.some((d) => d.serial === cand && d.state === 'device')) {
@@ -264,7 +304,7 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
       // 最后兜底：主动探 mDNS 当前端口（手机重启后旧 host:port 必然失效）。
       const discovered = await discoverMdnsAddress(signal)
       if (discovered) {
-        await run(['connect', discovered], signal)
+        await withDeadline(signal, stepTimeout, (s) => run(['connect', discovered], s))
         const after = await listDevices(signal)
         if (after.some((d) => d.serial === discovered && d.state === 'device')) {
           resolvedSerial = discovered
@@ -518,8 +558,15 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
 
   async function input(sel: UiSelector, text: string, signal?: AbortSignal): Promise<void> {
     await tap(sel, signal) // 先聚焦输入框
+    await inputText(text, signal)
+  }
+
+  /**
+   * 注入文本到**当前焦点**（不点击）。供 OCR 盲导航用：canvas 应用无控件可点，
+   * 调用方已用 tapPoint 点过输入框，这里只负责把文本送进去（同样走 Unicode IME 兜底中文）。
+   */
+  async function inputText(text: string, signal?: AbortSignal): Promise<void> {
     if (text && unicodeIme) {
-      // Unicode 输入：临时切 IME → 广播注入 → 切回原 IME。
       const cur = await adb(['shell', 'settings', 'get', 'secure', 'default_input_method'], signal)
       const prev = (cur.stdout || '').trim()
       try {
@@ -534,6 +581,37 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
     const escaped = text.replace(/ /g, '%s').replace(/([\\'"&<>|;$`()])/g, '\\$1')
     const r = await adb(['shell', 'input', 'text', escaped], signal)
     if (r.code !== 0) throw new Error(`input text 失败：${r.stderr.trim()}`)
+  }
+
+  /** 从 (x1,y1) 滑到 (x2,y2)（屏幕坐标；OCR 盲导航滚动用）。 */
+  async function swipeRaw(
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    ms = 300,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const r = await adb(
+      [
+        'shell',
+        'input',
+        'swipe',
+        String(Math.round(x1)),
+        String(Math.round(y1)),
+        String(Math.round(x2)),
+        String(Math.round(y2)),
+        String(ms),
+      ],
+      signal,
+    )
+    if (r.code !== 0) throw new Error(`input swipe 失败：${r.stderr.trim()}`)
+  }
+
+  /** 发送系统按键（keycode，如 66=ENTER）。仅导航用。 */
+  async function key(code: number, signal?: AbortSignal): Promise<void> {
+    const r = await adb(['shell', 'input', 'keyevent', String(code)], signal)
+    if (r.code !== 0) throw new Error(`input keyevent 失败：${r.stderr.trim()}`)
   }
 
   async function screenSize(signal?: AbortSignal): Promise<{ w: number; h: number }> {
@@ -628,7 +706,10 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
     tap,
     tapPoint,
     input,
+    inputText,
     swipe,
+    swipeRaw,
+    key,
     screencap,
     launchApp,
     foreground,

@@ -21,6 +21,19 @@ export interface Driver {
   /** 在输入框输入文本。 */
   input(sel: UiSelector, text: string): Promise<void>
   /**
+   * 向**当前焦点**注入文本（不点击）。供 OCR 盲导航（canvas 无控件可点，已用 tapPoint 聚焦）。可选。
+   */
+  inputText?(text: string): Promise<void>
+  /**
+   * 从 (x1,y1) 滑到 (x2,y2)（**屏幕坐标**）。OCR 盲导航滚动/拖动用。可选（Mock 无）。
+   */
+  swipeRaw?(x1: number, y1: number, x2: number, y2: number, ms?: number): Promise<void>
+  /**
+   * 发送系统按键（Android keycode，如 66=ENTER、4=BACK）。OCR 盲导航提交搜索用。可选（Mock 无）。
+   * 仅用于导航类按键；**绝不**用于确认支付类操作（红线）。
+   */
+  key?(code: number): Promise<void>
+  /**
    * 按屏幕坐标点击（**安全**：实现内先解析该点命中的节点、过 `assertTapSafe`，
    * 命中下单/支付即拒绝）。用于无稳定 id/文案、只能按几何位置进入的场景（如搜索结果卡片）。
    */
