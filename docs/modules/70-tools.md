@@ -28,6 +28,7 @@ export function formatCompareResult(result): string            // 分组比价�
 - **异步**：工具立即返回 `taskId`，绝不阻塞等待（§7.1）；后台由 `task/*` 跑，进度经 `ctx.jobs`。
 - 工具内**只调 `task/*`**；参数校验用 zod schema DSL；返回走 `CompareResult`（§6.2）。
 - `getResult/cancel` 必须幂等（§7.6 R2 表）。
+- **返回值必须 lossless JSON**（P5 真机踩坑）：`execute` 的返回值经 DSH `snapshotJsonValue` 严格校验，**任何 `undefined`（对象可选字段、数组元素）都会让整份工具输出被判 `invalid output: value is not lossless JSON`**，模型取不到结果。`getResult` 的 `note`/`error`、`listTasks` 的 `finishedAt` 常缺省 → 统一用 `toLosslessJson()`（`JSON.parse(JSON.stringify(v))`）清洗后再返回。新增 action 时**务必同样清洗**（`test/lifecycle.test.ts` 有 `isJsonValue` 回归）。
 - 错误映射：`BusyError→503 BUSY`、`StateAssertionError→带 dump/截图证据`、`NeedsHumanError→提示人工`。
 
 ## 本模块必须遵守的共享规则（清单）
