@@ -1,7 +1,9 @@
-# 交接记录 · 真机「全流程跑不通」排查（2026-10-24 中断，明天继续）
+# 交接记录 · 真机「全流程跑不通」排查（2026-10-24 中断，**2026-10-25 已结项 ✅**）
 
-> 状态：**代码已提交并全绿**（`pnpm check` 161/161），但**真机端到端仍未跑通**。
-> 已完成 6 个真实 bug 的定位与修复；**卡点是设备环境（平板 PC/桌面模式）**，不是代码逻辑。
+> 状态：**已闭环**。2026-10-25 平板切回全屏竖屏后真机端到端复测 **PASS**：
+> `payable=¥29.88 / balanced=true / confidence=high / needsConfirm=false`，证据脱敏落盘。
+> 昨日定位并修复的 6 个真实 bug 全部生效，卡点确认为**设备环境（PC/桌面模式浮窗）**、非代码逻辑。
+> 结论详见 `CHANGELOG[42]`；下文保留当时的排查与交接过程作为历史记录。
 
 ---
 
@@ -49,7 +51,12 @@
 
 ---
 
-## 4. 卡点（明天从这里继续）
+## 4. 卡点（**2026-10-25 已解除**，以下为历史记录）
+
+> **解除方式**：用户把平板切回**全屏 + 竖屏**（`mBounds=Rect(0,0-1600,2560)`、`mDisplayRotation=ROTATION_0`、
+> `mWindowingMode=fullscreen`、`inPcmode=0`），appX 不再漂移，`runCompare` 真机全流程 **一步跑通**
+> （`payable=¥29.88 balanced=true confidence=high needsConfirm=false`）。**无需改代码**。
+> 遗留：冷启动首屏若弹「身份核实」拼图滑块 → 按红线人工通过（代码侧已做到检测即停零点击）。
 
 ### 4.1 现象
 ```
@@ -150,7 +157,23 @@ adb devices   # 期望看到 adb-XXXX._adb-tls-connect._tcp  device
 
 ## 6. 当前仓库状态
 
-- HEAD：`5b579b3`（工作区干净）
-- 门禁：`pnpm check` **161/161 全绿**；`src/price` 行覆盖 97.15%
-- 安全红线：全程只读；未点任何提交/支付控件；未尝试破解验证码；
+- **已结项（2026-10-25）**：真机端到端 PASS，见 `CHANGELOG[42]`。
+- 门禁：`pnpm check` **161/161 全绿**（本次为真机验证，无代码改动）；`src/price` 行覆盖 97.15%
+- 安全红线：全程只读；未点任何提交/支付控件；未尝试破解验证码（拼图滑块由用户本人完成）；
   未自动修改窗口布局（只做检测并交人工）
+
+---
+## 7. 复测结果（2026-10-25）
+
+| 项 | 值 |
+|---|---|
+| 设备 | Lenovo TB321FU / Android 16 / 1600×2560 / 无线 `192.168.3.44:39079` |
+| 环境 | 全屏竖屏：`mBounds=Rect(0,0-1600,2560)`、`ROTATION_0`、`fullscreen`、`inPcmode=0` |
+| 店铺/菜品 | 江西小炒(盛夏路店) / 小炒肉木桶饭（1人份，微辣）×1 |
+| 实付 | **¥29.88**（`effectivePrice=¥29.88`） |
+| 平账 | `balanced=true`，expected=29.88 delta=0 tol=1 |
+| 识别 | `confidence=high`，`needsConfirm=false` |
+| 账目 | 28.88+3.9+2=34.78 −3.9 −1 = 29.88 ✅ |
+| 风险项 | 「美团红包 15元（待使用）」标 `presumed`，不计入/不抵实付 ✅ |
+| 证据 | 脱敏截图 `redaction=applied`（地址/联系人/手机号涂黑）+ dump 377 节点 |
+| 备注 | `adb shell input text` 中文会 NPE → 必须配 `unicodeIme=com.android.adbkeyboard/.AdbIME` |

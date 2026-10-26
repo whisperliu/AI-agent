@@ -242,6 +242,19 @@
 - **卡点（非代码）**：平板处于 **PC/桌面模式**，美团以浮窗打开、`appX` 在 641/1281 漂移，dump 与 input 坐标系不一致 → 端到端仍失败。守卫正确拦下并提示人工。
 - **交接**：已写 `docs/HANDOFF-device-p5.md`（含复跑脚本、环境恢复步骤、明日待办与验收标准）。
 
+### 轮次 27 · 真机端到端复测 PASS + 结项（2026-10-25）✅
+- **意图**：用户「继续昨天的操作」→ 交接待续项是真机端到端复测。
+- **接机过程**：先确认代码侧全绿（161/161，工作区干净）；设备一度离线（本机换到 192.168.71.x、旧 192.168.3.44 不可达）；后 `adb mdns services` 自动发现 `adb-HA26JA4H-Qwlhvj` → 实际地址 **`192.168.3.44:39079`**（用户口述 `192.168.3.74` 系笔误），直连成功。
+- **环境自检（昨日卡点）**：`cur=1600x2560`、`mBounds=Rect(0,0-1600,2560)`、`mDisplayRotation=ROTATION_0`、`mWindowingMode=fullscreen`、`mAreBoundsLetterboxed=false`、`inPcmode=0` → **全屏竖屏、PC 模式已关**，appX 漂移根因消失。
+- **验证码（红线）**：冷启动美团首屏弹「身份核实」拼图滑块 → **立即停止、零点击**，由用户本人完成；通过后回到首页（`MainActivity`）。
+- **真机全流程实跑**：`node .price-agent/diag/live-run.mjs`（补 `unicodeIme` 后）→ 首页→搜索→选店〔江西小炒(盛夏路店)〕→选规格〔小炒肉木桶饭 1人份·微辣〕→加购→去结算→读实付，一步跑通。
+- **结果**：`payable=¥29.88`、`effectivePrice=¥29.88`、`balanced=true`（expected=29.88 delta=0）、`confidence=high`、`needsConfirm=false`；账目 28.88+3.9+2=34.78 −3.9 −1 = 29.88 ✅；「15元红包（待使用）」标 `presumed` 不计入/不抵实付 ✅；脱敏证据落盘（`redaction=applied`）。
+- **附带环境发现**：`adb shell input text` 中文抛 NPE → 复跑脚本必须配 `unicodeIme=com.android.adbkeyboard/.AdbIME`；无线端口随重启变化。
+- **收尾动作**：`CHANGELOG[42]` + `docs/tasks.md` 进度改 ✅ + `docs/HANDOFF-device-p5.md` 结项 + 运行时 profile `serial` 更新为 `:39079`。
+- **验证**：真机实跑输出如上；`pnpm check` 161/161（本次为验证，无代码改动）。
+- **红线**：全程只读，未点提交/支付（「极速支付」未触碰），验证码即停并交人工，证据仅落 `.price-agent/`（已 gitignore）。
+- **状态**：`ok(真机端到端 PASS，P2–P5 全部验收项真机实证)`
+
 
 ---
 
@@ -257,7 +270,7 @@
     "cwd": "/home/liuqiaoqiao/dsh-plugin-price-agent",
     "tz": "Asia/Shanghai",
     "start": "2026-10-22T08:14:19+08:00",
-    "end": "2026-10-24T13:35:00+08:00",
+    "end": "2026-10-25T10:40:00+08:00",
     "baseline_commit": "43d6ea0",
     "final_commit": "d43ac0d (P1); P2 未提交"
   },
@@ -288,6 +301,7 @@
     {"n":24,"at":"10-24 18:45","user":"继续","intent":"P5 打磨(二) 失败取证脱敏/OCR框/证据缺失兜底","result":"capture.ts 默认脱敏(不可脱敏不落图,返回redaction/warning);steps.evidenceRedact(仅测试关);RawQuoteFacts.ocrWords→evidence.rawExtraction.ocrBoxes;bindEvidence 无证据兜底 missingReason","verify":"pnpm check 152/152;test/p5 +3 例;device-p2 断言超时改 evidenceRedact:false;真机本轮掉线未复跑(算法上轮 mt-s6 已验证)","status":"ok(P5 二阶段完成)"},
     {"n":25,"at":"10-24 18:55","user":"继续(打磨)","intent":"P5 打磨(三) 无线调试 mDNS 自动发现/回连","result":"adb.ts 重连候选:配置host:port→mDNS串号→adb mdns services 当前端口;真机旧:44881 自动切到 mDNS 串号;captureEvidence 落 dump+脱敏图","verify":"真机 probe TB321FU/16/canScreenshot+脱敏PNG;device-p2 +2(28 tests);pnpm check 全绿","status":"ok(P5 三阶段完成)"},
     {"n":26,"at":"10-24 21:30","user":"应对没有跑通的问题怎么处理？/ 先中断，收尾，记录检测到哪里了，明天继续","intent":"追查真机端到端跑不通的根因 + 交接","result":"定位并修复 6 个真机 bug(启动App/回首页/dump陈旧/重试/首页锚点/坐标)+新增窗口几何与坐标映射与分屏守卫;卡点为平板 PC/桌面模式浮窗 appX 漂移(环境问题,守卫正确拦截);写 docs/HANDOFF-device-p5.md 交接","verify":"pnpm check 161/161;device-p2 35 用例;真机仍未跑通(如实记录)","status":"paused(待用户切回全屏竖屏后复测)"},
+    {"n":27,"at":"10-25 10:40","user":"继续昨天的操作 / 提交，更新端口","intent":"真机端到端复测 + 结项","result":"mDNS 自动发现平板实际地址 192.168.3.44:39079 并连上;环境自检为全屏竖屏(inPcmode=0);冷启动遇拼图滑块即停由用户过;补 unicodeIme 后 runCompare 真机全流程一步跑通;CHANGELOG[42]+tasks 进度✅+HANDOFF 结项+profile serial 更新","verify":"真机 payable=29.88 balanced=true confidence=high needsConfirm=false;账目 34.78-3.9-1=29.88;15元红包标 presumed 不抵扣;脱敏证据 applied;pnpm check 161/161","status":"ok(真机端到端 PASS)"},
   ],
   "fixes": [
     {"topic":"job owner","file":"src/core/jobs-adapter.ts","detail":"owner=exec.agent.id 贯通"},
@@ -316,4 +330,4 @@
 
 ---
 
-*会话快照：2026-10-24 21:30 · 分支 `main`；**P0–P5 完成**。里程碑：**P2 真机 §8.4 PASS（Lenovo TB321FU / Android 16）**；**P3 美团真机全流程 PASS**（payable=19.9 balanced、confidence=high）；**P4 多平台 + 策略四态 + 谨慎互斥 + 统一输入快照分组**（DoD①②③④ 均落地）；**P4 真机复测** 饿了么 canvas 自绘 → ROI OCR，真机 payable=¥20.8；**P5 打磨（一/二/三）**：`device/redact.ts` 零依赖 PNG 截图脱敏（真机 mt-s6 `masked=2` 对照确认涂黑、无法脱敏则不落图）、`task/cleanup.ts` 证据/结果 TTL+保留上限清理、`core/retry.ts` 瞬时重试（**验证码/支付绝不重试**）、`runner.bindEvidence` 证据真实绑定（dump+脱敏图+OCR 逐词框）、`device/capture.ts` 失败取证同样默认脱敏、`device/adb.ts` 无线调试 mDNS 自动发现/回连（修旧 host:port 失效）。门禁 `pnpm check` **154/154 全绿**、`src/price` 行覆盖 **97.15%**。安全红线全程未触碰（无下单/支付路径、验证码即停零点击、仓内仅脱敏 fixture）。*
+*会话快照：2026-10-25 10:40 · 分支 `main`；**P0–P5 完成，且真机端到端已闭环（2026-10-25）**。里程碑：**P2 真机 §8.4 PASS（Lenovo TB321FU / Android 16）**；**P3 美团真机全流程 PASS**（payable=19.9 balanced、confidence=high）；**P4 多平台 + 策略四态 + 谨慎互斥 + 统一输入快照分组**（DoD①②③④ 均落地）；**P4 真机复测** 饿了么 canvas 自绘 → ROI OCR，真机 payable=¥20.8；**P5 打磨（一/二/三）**：`device/redact.ts` 零依赖 PNG 截图脱敏（真机 mt-s6 `masked=2` 对照确认涂黑、无法脱敏则不落图）、`task/cleanup.ts` 证据/结果 TTL+保留上限清理、`core/retry.ts` 瞬时重试（**验证码/支付绝不重试**）、`runner.bindEvidence` 证据真实绑定（dump+脱敏图+OCR 逐词框）、`device/capture.ts` 失败取证同样默认脱敏、`device/adb.ts` 无线调试 mDNS 自动发现/回连（修旧 host:port 失效）。**2026-10-25 真机端到端复测 PASS**：平板切回全屏竖屏后 `runCompare` 一步跑通 —— **payable=¥29.88、balanced=true、confidence=high、needsConfirm=false**，账目 34.78−3.9−1=29.88 平账、15 元待使用红包标 `presumed` 不抵扣、证据脱敏 `applied`；昨日 6 个真机修复全部生效，卡点确认为设备环境（已解除）。门禁 `pnpm check` **161/161 全绿**、`src/price` 行覆盖 **97.15%**。安全红线全程未触碰（无下单/支付路径、验证码即停零点击、仓内仅脱敏 fixture）。*
