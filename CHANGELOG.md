@@ -561,6 +561,21 @@
 
 ---
 
+### [43] 2026-10-26 14:12 · chore(device): 收尾提交 + 运行时 serial 改 auto + push origin + 真机二次复跑（payable=¥29.88，稳定）
+
+- **为什么**：上一轮（`[42]`）结项记录留在工作区未提交，且「已更新运行时 profile serial」实际未落盘（profile 仍是旧端口 `192.168.3.44:44881`），`main` 落后 `origin/main` 26 个提交从未 push。本轮四件事一并收尾，并在用户重新打开平板后再复跑一次确认稳定。
+- **做了什么**：
+  1. **提交**：`2b42431 docs: 真机端到端复测结项（payable=¥29.88）+ 修正 serial 更新说明`（CHANGELOG/HANDOFF/tasks/conversation-log 4 文件；`pnpm check` 161/161 绿后提交）。
+  2. **serial 改 auto**：`~/.dsh/profiles/web/cordis.patch.yml` 的 `device.serial` 由失效的 `192.168.3.44:44881` 改为 `auto`（由 `adb.ts` mDNS 自动发现当前端口）；同步更正 `[42]` 里"已更新 serial"的不准确表述。
+  3. **push**：`git push origin main` → `43d6ea0..2b42431`，现 `main...origin/main` 完全同步。
+  4. **真机二次复跑**：平板重开后 mDNS 端口变为 `192.168.3.44:38229`（再次印证 `auto` 必要）；`live-run.mjs` 冷启动→首页→搜索→选店〔江西小炒(盛夏路店)〕→选规格〔小炒肉木桶饭 1人份·微辣〕→加购→结算→读实付 全流程 EXIT=0。
+- **验证方式**：真机 `payable=¥29.88`、`effectivePrice=¥29.88`、`balanced=true`（delta=0）、`confidence=high`、`needsConfirm=false`；账目 28.88+3.9+2=34.78−3.9−1=29.88；「15元红包（待使用）」标 `presumed` 不抵扣；证据 `redaction=applied`（地址/联系人/手机号涂黑）。与 `[42]` 读数一致，稳定复现。
+- **附带说明（环境）**：可运行任务里残留一个「设置」分屏窗格，但美团任务本身为 `fullscreen`；普通 `am start` 拉起后聚焦窗口为 fullscreen，`assertUsableWindow` 只看聚焦窗 → 守卫正确放行（无需人工退出分屏）。
+- **红线**：全程只读；未触碰结算页「极速支付」；本轮无验证码；证据仅落 `.price-agent/diag/run/`（已 gitignore）。
+- **更新后状态**：工作区干净、与 origin 同步；真机读数稳定；`pnpm check` 161/161 全绿。
+
+---
+
 ## 追加条目的模板（供后续每轮使用）
 
 ```markdown
@@ -574,4 +589,4 @@
 
 ---
 
-*最后更新：2026-10-25 10:40 +08:00*
+*最后更新：2026-10-26 14:12 +08:00*

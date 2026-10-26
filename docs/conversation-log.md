@@ -255,6 +255,17 @@
 - **红线**：全程只读，未点提交/支付（「极速支付」未触碰），验证码即停并交人工，证据仅落 `.price-agent/`（已 gitignore）。
 - **状态**：`ok(真机端到端 PASS，P2–P5 全部验收项真机实证)`
 
+### 轮次 28 · 收尾提交 + serial 改 auto + push + 再复跑真机（2026-10-26）✅
+- **意图**：用户四选全选——①收尾提交文档 ②修运行时 serial ③push ④连上平板后再复跑真机。
+- **① 提交**：`2b42431 docs: 真机端到端复测结项（payable=¥29.88）+ 修正 serial 更新说明`（4 文件，`pnpm check` 161/161 绿后提交）。
+- **② serial 修正**：发现上一轮「更新 serial」**未真正落盘**（profile 仍是旧端口 `:44881`）；改为 `serial: auto`（mDNS 自动发现），并更正 CHANGELOG[42] 的不准确表述。运行时 profile 在会话工作区外，需审批落盘。
+- **③ push**：`43d6ea0..2b42431 main -> main`，现 `main...origin/main` 完全同步（此前落后 origin 26 个提交从未 push）。
+- **④ 真机复跑**：平板重新打开后，mDNS 自动发现端口变为 **`192.168.3.44:38229`**（又一次变化，印证 `auto` 的必要）。环境自检 `cur=1600x2560`、`mBounds=Rect(0,0-1600,2560)`、`ROTATION_0`、`fullscreen`、`inPcmode=0`。可运行任务里残留一个**设置分屏**（`Settings` 左窗 1279×1600），但美团任务本身是 `fullscreen`；普通 `am start` 把美团拉到前台后聚焦窗口为 fullscreen → 守卫放行。
+- **结果（与上次一致）**：`payable=¥29.88`、`effectivePrice=¥29.88`、`balanced=true`（delta=0）、`confidence=high`、`needsConfirm=false`；账目 28.88+3.9+2=34.78 −3.9 −1 = 29.88 ✅；「15元红包（待使用）」标 `presumed` 不抵扣 ✅；证据 `redaction=applied`（地址/联系人/手机号涂黑）。
+- **验证**：真机实跑 EXIT=0；证据图人工确认是真实结算页、底部「券前 ¥29.88 共减¥4.9」与读数一致。
+- **红线**：全程只读，未点提交/支付（「极速支付」未触碰），无验证码本轮出现；证据仅落 `.price-agent/diag/run/`（已 gitignore）。
+- **状态**：`ok(再复跑 PASS，读数稳定；收尾已提交并 push)`
+
 
 ---
 
@@ -270,9 +281,9 @@
     "cwd": "/home/liuqiaoqiao/dsh-plugin-price-agent",
     "tz": "Asia/Shanghai",
     "start": "2026-10-22T08:14:19+08:00",
-    "end": "2026-10-25T10:40:00+08:00",
+    "end": "2026-10-26T14:12:00+08:00",
     "baseline_commit": "43d6ea0",
-    "final_commit": "d43ac0d (P1); P2 未提交"
+    "final_commit": "2b42431 (docs 结项+serial 说明)"
   },
   "turns": [
     {"n":1,"at":"~08:14","user":"下一步构建","intent":"build P1","result":"P1 全链路实现 + 测试/文档","verify":"pnpm check 54/54","status":"ok"},
@@ -302,6 +313,7 @@
     {"n":25,"at":"10-24 18:55","user":"继续(打磨)","intent":"P5 打磨(三) 无线调试 mDNS 自动发现/回连","result":"adb.ts 重连候选:配置host:port→mDNS串号→adb mdns services 当前端口;真机旧:44881 自动切到 mDNS 串号;captureEvidence 落 dump+脱敏图","verify":"真机 probe TB321FU/16/canScreenshot+脱敏PNG;device-p2 +2(28 tests);pnpm check 全绿","status":"ok(P5 三阶段完成)"},
     {"n":26,"at":"10-24 21:30","user":"应对没有跑通的问题怎么处理？/ 先中断，收尾，记录检测到哪里了，明天继续","intent":"追查真机端到端跑不通的根因 + 交接","result":"定位并修复 6 个真机 bug(启动App/回首页/dump陈旧/重试/首页锚点/坐标)+新增窗口几何与坐标映射与分屏守卫;卡点为平板 PC/桌面模式浮窗 appX 漂移(环境问题,守卫正确拦截);写 docs/HANDOFF-device-p5.md 交接","verify":"pnpm check 161/161;device-p2 35 用例;真机仍未跑通(如实记录)","status":"paused(待用户切回全屏竖屏后复测)"},
     {"n":27,"at":"10-25 10:40","user":"继续昨天的操作 / 提交，更新端口","intent":"真机端到端复测 + 结项","result":"mDNS 自动发现平板实际地址 192.168.3.44:39079 并连上;环境自检为全屏竖屏(inPcmode=0);冷启动遇拼图滑块即停由用户过;补 unicodeIme 后 runCompare 真机全流程一步跑通;CHANGELOG[42]+tasks 进度✅+HANDOFF 结项+profile serial 更新","verify":"真机 payable=29.88 balanced=true confidence=high needsConfirm=false;账目 34.78-3.9-1=29.88;15元红包标 presumed 不抵扣;脱敏证据 applied;pnpm check 161/161","status":"ok(真机端到端 PASS)"},
+    {"n":28,"at":"10-26 14:12","user":"四选全选(收尾提交/serial改auto/push/复跑真机)","intent":"收尾提交 + 修正运行时 serial + push + 再复跑真机","result":"docs 提交 2b42431;profile serial 旧:44881→auto(mDNS自动发现),并更正 CHANGELOG[42] 不准确表述;push 43d6ea0..2b42431 同步 origin;平板重开后 mDNS 发现端口变为 :38229,普通 am start 拉美团前台(设置分屏任务不影响聚焦窗 fullscreen)后真机全流程再跑通","verify":"真机 payable=29.88 balanced=true confidence=high needsConfirm=false;账目 34.78-3.9-1=29.88;15元红包 presumed 不抵扣;证据 redaction=applied;pnpm check 161/161","status":"ok(再复跑 PASS)"},
   ],
   "fixes": [
     {"topic":"job owner","file":"src/core/jobs-adapter.ts","detail":"owner=exec.agent.id 贯通"},
@@ -330,4 +342,4 @@
 
 ---
 
-*会话快照：2026-10-25 10:40 · 分支 `main`；**P0–P5 完成，且真机端到端已闭环（2026-10-25）**。里程碑：**P2 真机 §8.4 PASS（Lenovo TB321FU / Android 16）**；**P3 美团真机全流程 PASS**（payable=19.9 balanced、confidence=high）；**P4 多平台 + 策略四态 + 谨慎互斥 + 统一输入快照分组**（DoD①②③④ 均落地）；**P4 真机复测** 饿了么 canvas 自绘 → ROI OCR，真机 payable=¥20.8；**P5 打磨（一/二/三）**：`device/redact.ts` 零依赖 PNG 截图脱敏（真机 mt-s6 `masked=2` 对照确认涂黑、无法脱敏则不落图）、`task/cleanup.ts` 证据/结果 TTL+保留上限清理、`core/retry.ts` 瞬时重试（**验证码/支付绝不重试**）、`runner.bindEvidence` 证据真实绑定（dump+脱敏图+OCR 逐词框）、`device/capture.ts` 失败取证同样默认脱敏、`device/adb.ts` 无线调试 mDNS 自动发现/回连（修旧 host:port 失效）。**2026-10-25 真机端到端复测 PASS**：平板切回全屏竖屏后 `runCompare` 一步跑通 —— **payable=¥29.88、balanced=true、confidence=high、needsConfirm=false**，账目 34.78−3.9−1=29.88 平账、15 元待使用红包标 `presumed` 不抵扣、证据脱敏 `applied`；昨日 6 个真机修复全部生效，卡点确认为设备环境（已解除）。门禁 `pnpm check` **161/161 全绿**、`src/price` 行覆盖 **97.15%**。安全红线全程未触碰（无下单/支付路径、验证码即停零点击、仓内仅脱敏 fixture）。*
+*会话快照：2026-10-26 14:12 · 分支 `main`（与 origin 同步，HEAD `2b42431`）；**P0–P5 完成，且真机端到端已闭环（2026-10-25）并二次复跑通过（2026-10-26）**。里程碑：**P2 真机 §8.4 PASS（Lenovo TB321FU / Android 16）**；**P3 美团真机全流程 PASS**（payable=19.9 balanced、confidence=high）；**P4 多平台 + 策略四态 + 谨慎互斥 + 统一输入快照分组**（DoD①②③④ 均落地）；**P4 真机复测** 饿了么 canvas 自绘 → ROI OCR，真机 payable=¥20.8；**P5 打磨（一/二/三）**：`device/redact.ts` 零依赖 PNG 截图脱敏（真机 mt-s6 `masked=2` 对照确认涂黑、无法脱敏则不落图）、`task/cleanup.ts` 证据/结果 TTL+保留上限清理、`core/retry.ts` 瞬时重试（**验证码/支付绝不重试**）、`runner.bindEvidence` 证据真实绑定（dump+脱敏图+OCR 逐词框）、`device/capture.ts` 失败取证同样默认脱敏、`device/adb.ts` 无线调试 mDNS 自动发现/回连（修旧 host:port 失效）。**2026-10-25 真机端到端复测 PASS**：平板切回全屏竖屏后 `runCompare` 一步跑通 —— **payable=¥29.88、balanced=true、confidence=high、needsConfirm=false**，账目 34.78−3.9−1=29.88 平账、15 元待使用红包标 `presumed` 不抵扣、证据脱敏 `applied`；昨日 6 个真机修复全部生效，卡点确认为设备环境（已解除）。门禁 `pnpm check` **161/161 全绿**、`src/price` 行覆盖 **97.15%**。安全红线全程未触碰（无下单/支付路径、验证码即停零点击、仓内仅脱敏 fixture）。*
