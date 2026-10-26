@@ -20,6 +20,10 @@ coverage/
 *.tsbuildinfo
 *.log
 
+# tesseract 语言模型（5MB 二进制，运行时自动下载到 .price-agent/ocr-cache；不入库）
+eng.traineddata
+*.traineddata
+
 # fixtures: keep only redacted, small samples; ignore raw captures
 test/fixtures/**/*.raw.png
 test/fixtures/**/*.raw.xml
