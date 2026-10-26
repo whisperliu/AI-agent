@@ -31,6 +31,7 @@ interface Driver {
 
 ## 实现要点（特有）
 - `adb.ts` **必须**调 `runNativeCommand('adb', argv, signal, 'hidden')`，**不得**自写 spawn/超时/取消（§2.2）。命令经注入的 `AdbRunner` 边界（默认 `runNativeCommand`），**测试可注入假 runner 离线回放**，无需真机。
+- **每条 adb 命令的硬超时（`stepTimeoutMs`，2026-10-26 真机教训）**：`runNativeCommand` 本身**无默认超时**，此前 `stepTimeoutMs` 配了却未使用 → 设备无线调试中途掉线时单条 `adb`（screencap/dump/pull）会**无限挂起**，`waitFor` 的帧间时钟兜不住。现在 `adb()` 及 `listDevices/discoverMdnsAddress/connect/mdns check` 等直连 `run()` 都经 `withDeadline()`：用**平台原语 `AbortSignal.timeout` + `AbortSignal.any`** 组合"调用方 signal 或超时"，交给 `runNativeCommand` 杀子进程；**不自造 timer/spawn**，到点抛 `timeout` 语义错误（`retry.ts` 的 `isRetryable` 可识别重试）。回归：`test/device-p2.test.ts`「hung adb command…does not hang forever」「stepTimeout wraps every command」。
 - **连接/重连（§8.3，P5 增强）**：每次动作前 `ensureConnected()` → `adb devices` 探活；目标掉线且是网络地址（`host:port`）→ 依次尝试 ①配置的 `host:port` ②学到的 mDNS 实例名（`._adb-tls-connect._tcp`）③`adb mdns services` **主动发现的当前端口**，任一成功即重连并沿用（手机重启后端口变化不再需人工重配）；全失败抛可读错误（提示无线调试/同网段/端口）。
 - **daemon 冷启动预热**：`adb` daemon 刚启动时首帧 `adb devices` 可能为空（mDNS 发现需 1–2s）。`ensureConnected` 在**首次**为空时先 `adb mdns check` 再短轮询（3×500ms）；只做一次，注入 runner（离线测试）时跳过。
 - **截图二进制**：`shell screencap -p /sdcard/x.png` 落盘 → `adb pull` 到本地临时文件 → `readFile` 读字节（**不经 utf8**，否则 PNG 损坏）；校验 PNG 魔数。

@@ -279,6 +279,23 @@
 - **重启后验证（2026-10-26 14:42）**：用户重启 DSH web 后实测——`probe` OK；旧任务 `getResult` 正常返回（证明修复已加载）；完整链路 `start(force) → 后台 completed → getResult` 返回 `meituan ¥29.88 / high / 需复核=否`；新任务 `payable=29.88 balanced=true confidence=high needsConfirm=false`、证据 `redaction=applied`、截图存在。工具层比价链路端到端可用 ✅
 
 
+### 轮次 30 · 跑类型检查 + 确认设备状态 + 治理"上下文超出"（2026-10-26）✅
+- **意图**：用户「现在跑类型检查，并确认设备当前状态。同时当前测试出现上下文超出问题，优化」——三件事：①类型检查 ②设备状态 ③优化上下文超出。
+- **① 类型检查**：`pnpm typecheck`（`tsc --noEmit`）**EXIT=0 无错误**；并跑全量 `pnpm check`（typecheck→lint→format:check→boundary→test）**全绿**。
+- **② 设备状态（纯文本，未读图）**：`adb` 在 `.home/android-sdk/platform-tools`（不在默认 PATH）。当前设备**在线且唯一**：Lenovo **TB321FU** / **Android 16 (SDK 36)** / `Physical size: 1600x2560 @ 400dpi`；`mWakefulness=Awake`；前台 `me.ele/...EleTMSActivity`（饿了么停在前台）；默认输入法为搜狗（需注入中文时应临时切 ADBKeyboard）。注意 `adb devices` 同时列出 **LAN `192.168.3.44:38229`** 与 **mDNS 别名 `adb-HA26JA4H…`**（同一台，多设备时须 `-s` 指定）。
+- **③ 上下文超出（定位 + 优化）**：解压上一个会话（`zstdDecompressSync`）统计到 **28 个图片块**——模型为看饿了么 canvas 页面**逐张 `read_image` 整屏 1600×2560 截图**（单张 1.6–3.3MB，≈5000+ 视觉 token），模型自述"reading many screenshots (expensive)…context-expensive"。根因：canvas 无 dump → 没有替代读图的路径 → 退回整屏读图撑爆上下文。优化：新增 `scripts/screen-inspect.mjs`（`--ocr` 截图转文本+坐标；`--crop/--scale` 只裁关键区出小图并打印估算视觉 token）；`ocrNav.waitFor` 超时异常自带末帧 OCR 文本（排查不必读图）；`AGENTS.md §2`/`README`/`docs/modules/30-platform.md` 固化规则。实测：整屏 3356KB(≈5400 token) → 裁底部条+`--scale 0.5` → **58KB/≈149 token** 且文字清晰；对**当前真机**实时截图 ROI OCR 读到 `现在下单，即享优惠 / ¥26.03 优惠明细 / 去结算`，全程未读整屏图。`pnpm check` **183/183 全绿**（+5 新测）。
+- **红线**：只读；类型检查/测试/OCR 均不下单不支付、不破解验证码；截图仅落 `.price-agent/`（gitignore）。
+- **状态**：`ok(typecheck 通过；设备在线 TB321FU/Android16；上下文超出已定为读整屏图所致并给出替代工具与规则)`
+
+### 轮次 31 · 继续下一步：真机端到端受阻（平板掉线）+ 修「掉线无限挂起」真 bug（2026-10-26）
+- **意图**：用户「继续下一步」→ 接 P6（饿了么 canvas OCR 盲导航）**真机端到端验证**这件唯一的收尾项。
+- **过程**：设备当时在线（TB321FU/Android16，前台 `EleTMSActivity`），OCR 管线冒烟正常（`look()` 305 词/16s，`supportsOcrNav=true`）。启动 `runElemeReal` 真机端到端（走 OCR 盲导航）后台跑，却**卡死无输出**；随后确认平板**无线调试掉线**：本机 eth1=192.168.3.45，扫 `192.168.3.0/24` 只有网关与本机在线，平板 `.44` 100% 丢包、`adb mdns services` 无服务 → **真机验证被设备离线阻塞（非代码问题）**。
+- **顺带修真实 bug（不依赖设备、可离线测）**：卡死时排查到 `runNativeCommand`（DSH `execFile` 薄封装）**无默认超时**，而 `task.stepTimeoutMs` 从 config→container→createAdbDriver 一路传入却在 `adb.ts` **从未使用**、全仓无 `withTimeout` → 设备掉线时单条 `adb`（screencap/dump/pull）**无限挂起**，`waitFor` 帧间时钟兜不住。修复：`adb.ts` 新增 `withDeadline()`，用**平台原语 `AbortSignal.timeout`+`AbortSignal.any`** 组合信号交 `runNativeCommand` 杀子进程（不自造 timer/spawn，守 §2.2），`adb()` 及直连 `run()` 全包裹，超时抛 `timeout` 语义错误供 `isRetryable` 重试。+2 回归（hung command 有限时间失败、screencap 也被覆盖）。
+- **验证**：`pnpm check` **185/185 全绿**。文档：`docs/modules/40-device.md` 补 `stepTimeoutMs` 说明；`CHANGELOG[46]`。
+- **待续**：平板重新上线（开无线调试、与本机同网段）后，重跑 `.price-agent/diag/diag2.mjs`（或 GUI `price_agent`）完成饿了么真机端到端，读 payable 后结项 P6。
+- **红线**：只读；未下单/未支付/未碰验证码；截图仅落 `.price-agent/`。
+- **状态**：`partial(真机端到端阻塞于设备离线；已修掉线无限挂起 bug；等设备上线复跑)`
+
 ---
 
 ## 附录 A · 机器可读元数据（JSON）
@@ -293,9 +310,9 @@
     "cwd": "/home/liuqiaoqiao/dsh-plugin-price-agent",
     "tz": "Asia/Shanghai",
     "start": "2026-10-22T08:14:19+08:00",
-    "end": "2026-10-26T14:12:00+08:00",
+    "end": "2026-10-26T21:30:00+08:00",
     "baseline_commit": "43d6ea0",
-    "final_commit": "2b42431 (docs 结项+serial 说明)"
+    "final_commit": "pending（本轮工作区改动 3 次提交：P6 实现 / 工具与文档 / 收尾）"
   },
   "turns": [
     {"n":1,"at":"~08:14","user":"下一步构建","intent":"build P1","result":"P1 全链路实现 + 测试/文档","verify":"pnpm check 54/54","status":"ok"},
@@ -327,6 +344,8 @@
     {"n":27,"at":"10-25 10:40","user":"继续昨天的操作 / 提交，更新端口","intent":"真机端到端复测 + 结项","result":"mDNS 自动发现平板实际地址 192.168.3.44:39079 并连上;环境自检为全屏竖屏(inPcmode=0);冷启动遇拼图滑块即停由用户过;补 unicodeIme 后 runCompare 真机全流程一步跑通;CHANGELOG[42]+tasks 进度✅+HANDOFF 结项+profile serial 更新","verify":"真机 payable=29.88 balanced=true confidence=high needsConfirm=false;账目 34.78-3.9-1=29.88;15元红包标 presumed 不抵扣;脱敏证据 applied;pnpm check 161/161","status":"ok(真机端到端 PASS)"},
     {"n":28,"at":"10-26 14:12","user":"四选全选(收尾提交/serial改auto/push/复跑真机)","intent":"收尾提交 + 修正运行时 serial + push + 再复跑真机","result":"docs 提交 2b42431;profile serial 旧:44881→auto(mDNS自动发现),并更正 CHANGELOG[42] 不准确表述;push 43d6ea0..2b42431 同步 origin;平板重开后 mDNS 发现端口变为 :38229,普通 am start 拉美团前台(设置分屏任务不影响聚焦窗 fullscreen)后真机全流程再跑通","verify":"真机 payable=29.88 balanced=true confidence=high needsConfirm=false;账目 34.78-3.9-1=29.88;15元红包 presumed 不抵扣;证据 redaction=applied;pnpm check 161/161","status":"ok(再复跑 PASS)"},
     {"n":29,"at":"10-26 14:37","user":"现在可以正常比价吗","intent":"GUI 工具实跑真机验证 + 修复 getResult 输出 bug","result":"probe/start 正常、任务 completed,但 getResult 报 not lossless JSON(reply 带 note/error undefined,DSH 严格拒 undefined);新增 toLosslessJson 清洗 getResult/listTasks/execute;+4 回归用例(isJsonValue 断言)","verify":"pnpm check 165/165;真实结果文件 formatCompareResult 渲染 meituan ¥29.88 high 需复核=否;真机读数 29.88 balanced=true;需重启 DSH web 生效","status":"ok(修复工具层序列化 bug)"},
+    {"n":30,"at":"10-26 20:05","user":"现在跑类型检查，并确认设备当前状态。同时当前测试出现上下文超出问题，优化","intent":"typecheck + 设备状态 + 治理上下文超出","result":"typecheck EXIT=0;设备在线 TB321FU/Android16/1600x2560/前台EleTMSActivity;定根因为上一次饿了么调试会话逐张 read_image 整屏图(28 张、单张1.6-3.3MB);新增 scripts/screen-inspect.mjs(OCR→文本/裁剪降采样出小图+估算token)、ocrNav.waitFor 异常自带末帧文本、AGENTS§2/README/30-platform 规则化","verify":"pnpm check 183/183;真机实时截图 3.4MB→裁底部条+scale0.5→58KB/≈149token 且文字清晰;整屏未入上下文","status":"ok(上下文超出已治理)"},
+    {"n":31,"at":"10-26 21:05","user":"继续下一步","intent":"P6 饿了么 canvas OCR 盲导航真机端到端","result":"设备起跑在线、OCR冒烟正常;runElemeReal 真机端到端卡死→确认平板无线调试掉线(.44丢包/mDNS无服务);顺带定位并修复「掉线时 adb 命令无限挂起」真 bug:stepTimeoutMs 传了却没在 adb.ts 使用、runNativeCommand 无默认超时 → 新增 withDeadline(AbortSignal.timeout/any,不自造timer,守§2.2)","verify":"pnpm check 185/185(+2 掉线超时回归);真机端到端阻塞于设备离线","status":"partial(P6 真机待设备上线复跑;挂起 bug 已修)"},
   ],
   "fixes": [
     {"topic":"job owner","file":"src/core/jobs-adapter.ts","detail":"owner=exec.agent.id 贯通"},
@@ -341,18 +360,20 @@
     {"topic":"schemastery 无 optional/nullable","file":"src/config.ts","detail":"可选字段用裸 schema；可空用 z.union([z.number(),z.const(null)]).default(null)"},
     {"topic":"策略假断言可用","file":"src/price/strategies.ts","detail":"配置/记账最多 presumed；星期/门槛/日限只降级 known_unavailable；effectivePrice 仍只扣 verified&&!alreadyIncluded"},
     {"topic":"跨平台误互斥","file":"src/price/strategies.ts","detail":"applyCrossPlatformExclusivity 默认不互斥，仅 crossPlatformExclusive=true 且他平台 verified 才降级"},
-    {"topic":"坐标行抽取重复实现","file":"src/platform/settleRows.ts","detail":"美团/饿了么共享聚行+标签→金额+结果卡/可点原语，避免复制；amountNearLabel 改中心点比较"}
+    {"topic":"坐标行抽取重复实现","file":"src/platform/settleRows.ts","detail":"美团/饿了么共享聚行+标签→金额+结果卡/可点原语，避免复制；amountNearLabel 改中心点比较"},
+    {"topic":"掉线无限挂起","file":"src/device/adb.ts","detail":"stepTimeoutMs 传了却未使用+runNativeCommand 无默认超时→设备掉线单条 adb 永远挂起；新增 withDeadline(AbortSignal.timeout/any，不自造 timer，守 §2.2)，所有 adb/run 通道包裹，超时抛 timeout 供 isRetryable 重试（+2 回归）"},
+    {"topic":"canvas 调试读整屏图撑爆上下文","file":"scripts/screen-inspect.mjs","detail":"canvas 无 dump→退回逐张 read_image 整屏图(单张1.6-3.3MB)；新增 OCR→文本/裁剪降采样出小图(打印估算视觉 token)；ocrNav.waitFor 异常自带末帧文本；规则化到 AGENTS§2"}
   ],
   "deliverables": [
     "src/**","test/**","scripts/web-plugin.patch.yml","scripts/install-into-web-profile.sh",
-    "scripts/device-min-experiment.sh","scripts/device-rehearsal.mjs",
-    "test/fixtures/meituan-settle.real-device.xml","test/fixtures/eleme-settle.real-device.xml",
-    "src/price/strategies.ts","src/platform/{elemeReal,settleRows,navigator}.ts","src/platform/selectors/eleme.ts",
-    "docs/conversation-log.md","CHANGELOG.md[19]-[35]"
+    "scripts/device-min-experiment.sh","scripts/device-rehearsal.mjs","scripts/evidence-inspect.mjs","scripts/screen-inspect.mjs",
+    "test/fixtures/meituan-settle.real-device.xml","test/fixtures/eleme-settle.real-device.xml","test/fixtures/eleme-confirm.real-ocr.json",
+    "src/price/strategies.ts","src/platform/{elemeReal,settleRows,navigator,ocrNav}.ts","src/platform/selectors/eleme.ts",
+    "docs/conversation-log.md","CHANGELOG.md[19]-[46]"
   ]
 }
 ```
 
 ---
 
-*会话快照：2026-10-26 14:37 · 分支 `main`（含 getResult 修复，待提交）；**P0–P5 完成，且真机端到端已闭环（2026-10-25）并二次复跑通过（2026-10-26）**。里程碑：**P2 真机 §8.4 PASS（Lenovo TB321FU / Android 16）**；**P3 美团真机全流程 PASS**（payable=19.9 balanced、confidence=high）；**P4 多平台 + 策略四态 + 谨慎互斥 + 统一输入快照分组**（DoD①②③④ 均落地）；**P4 真机复测** 饿了么 canvas 自绘 → ROI OCR，真机 payable=¥20.8；**P5 打磨（一/二/三）**：`device/redact.ts` 零依赖 PNG 截图脱敏（真机 mt-s6 `masked=2` 对照确认涂黑、无法脱敏则不落图）、`task/cleanup.ts` 证据/结果 TTL+保留上限清理、`core/retry.ts` 瞬时重试（**验证码/支付绝不重试**）、`runner.bindEvidence` 证据真实绑定（dump+脱敏图+OCR 逐词框）、`device/capture.ts` 失败取证同样默认脱敏、`device/adb.ts` 无线调试 mDNS 自动发现/回连（修旧 host:port 失效）。**2026-10-25 真机端到端复测 PASS**：平板切回全屏竖屏后 `runCompare` 一步跑通 —— **payable=¥29.88、balanced=true、confidence=high、needsConfirm=false**，账目 34.78−3.9−1=29.88 平账、15 元待使用红包标 `presumed` 不抵扣、证据脱敏 `applied`；昨日 6 个真机修复全部生效，卡点确认为设备环境（已解除）。门禁 `pnpm check` **165/165 全绿**、`src/price` 行覆盖 **97.15%**。**2026-10-26 修复 `getResult` 工具输出被 DSH 判「not lossless JSON」（清洗 undefined 字段，+4 回归用例）**。安全红线全程未触碰（无下单/支付路径、验证码即停零点击、仓内仅脱敏 fixture）。*
+*会话快照：2026-10-26 21:30 · 分支 `main`（含 P6 实现、省上下文工具、掉线超时修复，本轮分 3 次提交）；**P0–P5 完成，且真机端到端已闭环（2026-10-25）并二次复跑通过（2026-10-26）**。里程碑：**P2 真机 §8.4 PASS（Lenovo TB321FU / Android 16）**；**P3 美团真机全流程 PASS**（payable=19.9 balanced、confidence=high）；**P4 多平台 + 策略四态 + 谨慎互斥 + 统一输入快照分组**（DoD①②③④ 均落地）；**P4 真机复测** 饿了么 canvas 自绘 → ROI OCR，真机 payable=¥20.8；**P5 打磨（一/二/三）**：`device/redact.ts` 零依赖 PNG 截图脱敏（真机 mt-s6 `masked=2` 对照确认涂黑、无法脱敏则不落图）、`task/cleanup.ts` 证据/结果 TTL+保留上限清理、`core/retry.ts` 瞬时重试（**验证码/支付绝不重试**）、`runner.bindEvidence` 证据真实绑定（dump+脱敏图+OCR 逐词框）、`device/capture.ts` 失败取证同样默认脱敏、`device/adb.ts` 无线调试 mDNS 自动发现/回连（修旧 host:port 失效）。**2026-10-25 真机端到端复测 PASS**：`runCompare` 一步跑通 —— **payable=¥29.88、balanced=true、confidence=high、needsConfirm=false**，账目 34.78−3.9−1=29.88 平账、15 元待使用红包标 `presumed` 不抵扣、证据脱敏 `applied`。**2026-10-26 修复 `getResult` 工具输出「not lossless JSON」（清洗 undefined，+4 回归）。2026-10-26 新增 P6 饿了么 canvas OCR 盲导航（`platform/ocrNav.ts` + `elemeReal.runElemeOcrNav`，canvas 支付红线 `assertOcrTapSafe`，拼单页守卫），离线 185/185 全绿；治理"上下文超出"（`scripts/screen-inspect.mjs` + OCR 失败自带末帧文本）；修复"设备掉线时 adb 命令无限挂起"（`adb.ts` `withDeadline` 硬超时）。P6 饿了么真机端到端仍待平板重新上线复跑（当前设备离线，非代码问题）。** 安全红线全程未触碰（无下单/支付路径、验证码即停零点击、仓内仅脱敏 fixture）。*

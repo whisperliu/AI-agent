@@ -12,7 +12,8 @@
 | `xml.ts` | uiautomator XML 最小解析（零依赖） | `parseNodes/textOf/hasResourceId` |
 | `selectors/*` | 控件选择器集中登记 | `GENERIC_SETTLE_SELECTORS`、`MEITUAN_SELECTORS` |
 | `meituanReal.ts` | **美团真机适配**（P3）：纯提取 + 真机流程 | `extractMeituanSettle`、`extractMeituanSettleFromDump`、`runMeituanReal`、`isDangerNode` |
-| `elemeReal.ts` | **饿了么真机适配**（P4）：纯提取 + 真机流程（与美团同构） | `extractElemeSettle`、`extractElemeSettleFromDump`、`runElemeReal`、`elemeAnchors` |
+| `elemeReal.ts` | **饿了么真机适配**（P4/P6）：纯提取 + 真机流程（OCR 盲导航） | `extractElemeSettle`、`extractElemeSettleFromDump`、`runElemeReal`、`runElemeOcrNav`、`elemeAnchors`、`ELEME_LAYOUT`、`supportsOcrNav`、`isGroupOrderPage`、`locateFirstDish(Spec)Y` |
+| `ocrNav.ts` | **OCR 盲导航原语**（P6，canvas 自绘专用，平台共享） | `createOcrNav`、`wordAtPoint`、`wordsNearPoint`、`assertOcrTapSafe`、`describeWords` |
 | `settleRows.ts` | 结算页"坐标/行"抽取**通用原语**（平台共享）：聚行/标签→金额/结果卡/可点文案 | `buildRows`、`amountNearLabel`、`amountFromRow`、`amountLeftOfAnchor`、`parseMoneyText`、`firstResultCardCenter`、`firstActionableCenter` |
 | `navigator.ts` | 真机导航原语（平台共享，包装 Driver） | `createNavigator`、`Navigator`、`textAnchorRegex` |
 | `selectors/eleme.ts` | 饿了么选择器集中登记 | `ELEME_SELECTORS` |
@@ -78,6 +79,8 @@ interface PlatformStrategy {
   - `runElemeReal` 走 OCR：`tryReadSettle` 控件树优先，读不到实付且注入 `ctx.ocr` 时 → 截图 + `settlePanelRoi`（`tms_fragment_container` 右栏）→ `extractElemeSettleFromOcr`。`confidence` 永不 high，低置信/不平 → `needsConfirm`。
   - **真机实测**：payable=**¥20.8** 稳定读出（截图"立即支付 ¥20.8"）；一次 OCR 丢"打包费 ¥1"数字 → delta −1 → 如实 `low/needsConfirm`。
   - 导航（搜索/加购/去结算）在 canvas 下只靠 resourceId 锚点 + 坐标点按；**全自动逐页校准不如美团稳定**（canvas 无文案钩子），当前可稳定验收的是**已在结算页时的 OCR 读数**。
+  - **P6 OCR 盲导航（canvas 全自动）**：`ocrNav.ts` 把"截图→tesseract 逐词（屏幕像素绝对坐标）→按文案/坐标定位→`tapPoint` 盲点"封装成原语；`elemeReal.runElemeOcrNav` 用它把「首页→搜索→选店→选规格→去结算→读实付」全程跑通（布局坐标见 `ELEME_LAYOUT`，换机型需重校准）。**canvas 无控件树 → `tapPoint` 的 `assertTapSafe` 抓不到画布上的"支付"文案，故每次点击前额外用 `assertOcrTapSafe` 按 OCR 邻域文字做支付红线拦截**（这是 canvas 场景唯一有效防线）。「拼单详情」页有 `合计/去结算` 但金额是整单总额，用 `isGroupOrderPage` 拦住不读、如实交人工（不自动取消他人拼单）。加购**只点一次**（非幂等、有副作用）。
+  - **失败自解释（省上下文）**：`createOcrNav().waitFor` 超时抛出的异常**自带末帧 OCR 文本（带 y 坐标、截断到 ~20 行/60 词）**，排查"卡在哪页"看异常即可，**不必再 `read_image` 读整屏图**（2026-10-26 教训：一次饿了么调试读了 28 张整屏图致上下文超出）。
 - **OCR 逐词框留存（P5）**：`extractElemeSettleFromOcr` 返回 `ocrWords`（原始 `t/c/bbox`），`task/runner` 写入 `evidence.rawExtraction.ocrBoxes`，便于人工按坐标复核金额；截图（已脱敏）同时作为证据落盘。
 - **fixture**：`test/fixtures/eleme-settle.real-device.xml`（脱敏；30+3+1−5=29 balanced、`confidence=high`）。
 

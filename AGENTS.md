@@ -47,10 +47,11 @@
   - **循环依赖 = 0**。
 - **配置**：字段只加在 `src/config.ts`（schemastery），并同步 `cordis.patch.yml`；`pnpm typecheck` 必须过。
 - **错误语义**：`BusyError → 503 BUSY`、`StateAssertionError → 带 dump/截图证据`、`NeedsHumanError → 提示人工`（不得吞异常）。
-- **真机调试 · 省上下文（强制）**：真机回归时**默认只用文本 dump 判页面/控件/金额**，**不要**把整屏 PNG 读入上下文（`screencap` 单张 1600×2560 约 1–3MB，几张就会占满模型上下文，导致后续任务跑不动）。需要看图时**先**：
+- **真机调试 · 省上下文（强制）**：真机回归时**默认只用文本 dump 判页面/控件/金额**，**不要**把整屏 PNG 读入上下文（`screencap` 单张 1600×2560 约 1–3MB、≈5000+ 视觉 token，几张就会占满模型上下文，导致后续任务跑不动）。需要看图时**先**：
   1. 用 `node scripts/evidence-inspect.mjs <dump.xml> [--settle|--clickable] [--filter kw…]` 把 dump 解析成**紧凑文本（含坐标）**——绝大多数判定足够；
-  2. 确有必要看视觉（布局/图片文案）时，**只裁关键区域**再看，或**只读 1 张**最终证据图，绝不逐页整屏读；
-  3. 截图仅落 `.price-agent/`（已 gitignore），用完**及时清理**；入 git 的只有脱敏 fixture。工具侧：`price_agent` 只返回**文本**比价表（不返回图片），保持该约定。
+  2. canvas 自绘（如饿了么）**没有可读 dump** 时，用 `node scripts/screen-inspect.mjs <shot.png> --ocr [--roi x,y,w,h] [--filter kw…]` 把截图 **OCR 成文本+坐标**（零依赖解码；金额/按钮/坐标都能读），**不要**先读图；
+  3. 确有必要看视觉（布局/图片文案）时，**只裁关键区域**再看：`node scripts/screen-inspect.mjs <shot.png> --crop x,y,w,h --scale 0.5 --out tiny.png`，脚本会打印**估算视觉 token**；有 `--max-tokens` 超限警告就继续裁剪/降采样，或**只读 1 张**最终证据图，绝不逐页整屏读；
+  4. 截图仅落 `.price-agent/`（已 gitignore），用完**及时清理**；入 git 的只有脱敏 fixture。工具侧：`price_agent` 只返回**文本**比价表（不返回图片），保持该约定。
 
 - **风格**：`pnpm format` 后再提交；ESLint 0 error；不做与任务无关的大范围重排。
 

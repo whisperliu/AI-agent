@@ -589,6 +589,48 @@
 
 ---
 
+### [45] 2026-10-26 20:05 · feat(tools): 截图**文本化/裁剪**检查器 `screen-inspect.mjs` + OCR 导航失败自解释（治理"上下文超出"）
+
+- **为什么**：用户反馈"当前测试出现上下文超出"。定位根因：2026-10-26 那次饿了么 P6 调试会话，模型为看页面**逐张 `read_image` 整屏 1600×2560 截图**（该会话共 **28 次** 图片块、单张 1.6–3.3MB），模型在过程里自述"reading many screenshots (expensive)…context-expensive"。整屏图每张 ≈5000+ 视觉 token，几张即撑爆上下文 → 后续任务跑不动。`price_agent` 工具本身只返回**文本**比价表（不返回图片），撑爆的是**人工调试路径**。此前（CHANGELOG[34]）已就美团 dump 做过"文本优先"，但 **canvas 自绘（饿了么）无可读 dump**，该盲区没有替代路径，导致又退回读图。
+- **做了什么**：
+  1. 新增 `scripts/screen-inspect.mjs`（零依赖，PNG 解码/编码复用 `src/device/redact.ts`）：①`--ocr [--roi] [--filter]` 把截图 **OCR 成逐行文本+屏幕坐标+置信度**（不产图、不进上下文）；②`--crop x,y,w,h --scale N --out` 只裁关键区域/降采样出**小图**，并打印**估算视觉 token**（`w*h/750`）与 `--max-tokens` 超限警告。实测：整屏 3356KB(≈5400 token) → 裁底部条 + `--scale 0.5` → **58KB / 800×140 / ≈149 token**，肉眼确认「¥26.03 / 去结算」清晰可辨，文字内容与 OCR 结果一致。
+  2. OCR 盲导航异常**自解释（省上下文）**：`src/platform/ocrNav.ts` 的 `waitFor` 超时异常追加 `describeWords()`——末帧 OCR 文本按行聚拢、带 y 坐标、截断到 ~20 行/60 词，排查"卡在哪页"看异常文本即可，**不必再读图**。
+  3. 规则与文档固化：`AGENTS.md` §2「真机调试·省上下文」新增 canvas-OCR 与"裁剪+降采样出小图并核对 token"两条；`README` 工具表、`docs/modules/30-platform.md`（`ocrNav.ts` + P6 盲导航 + 失败自解释）同步更新。
+- **测试**：`test/screen-inspect.test.ts`（+3：降采样/裁剪越界钳制/放大尺寸数学，纯图像不依赖 tesseract）；`test/ocrNav.test.ts`（+2：`waitFor` 超时异常带末帧文本、`describeWords` 聚行/限长）。
+- **验证方式**：`pnpm check` **183/183 全绿**；对**当前真机**（TB321FU / Android 16 / 1600×2560）实时 `exec-out screencap` 取 3.4MB 整屏 PNG → `--crop 0,2280,1600,280 --ocr` 读到 `现在下单，即享优惠 / ¥26.03 优惠明细 / 下单后约15分钟可自取 去结算`，全程**未把整屏图读入上下文**。
+- **是否影响已有行为**：否。`screen-inspect.mjs` 为新增调试脚本；`describeWords` 仅扩展异常**文案**，`waitFor` 的判定/超时语义不变。
+- **红线**：只读；脚本不触发任何点击/支付；截图仅落 `.price-agent/`（gitignore）；验证只 OCR 读文本，未点提交/支付。
+- **更新后状态**：canvas 自绘与"必须看图"场景均有**不撑爆上下文**的替代路径（OCR 文本 / 裁剪小图），后续真机调试不再需要逐张读整屏 PNG。
+
+---
+
+### [46] 2026-10-26 20:25 · fix(device): 设备掉线时 adb 命令无限挂起 —— 补 `stepTimeoutMs` 硬超时（真机端到端卡死根因）
+
+- **为什么**：本轮真机跑 P6（饿了么 OCR 盲导航）端到端时，任务**卡死不动**、也没有可见进程，随后确认平板无线调试掉线（`192.168.3.44` 100% 丢包、mDNS 无服务）。排查发现：`runNativeCommand`（DSH 的 `execFile` 薄封装）**没有默认超时**，而配置项 `task.stepTimeoutMs`（默认 8000ms）虽一路从 `config → container → createAdbDriver` 传入，却在 `adb.ts` 里**从未被使用**、全仓也没有任何 `withTimeout`。于是设备掉线时单条 `adb`（`screencap`/`dump`/`pull`）会一直挂起——`runElemeOcrNav` 里 `waitFor` 靠"两次 look 之间查时钟"**兜不住**（一次 `look()` 卡在 `screencap` 就永不返回），整个比价任务无限挂起。这是"测试跑不动/挂死"的真实原因之一，且与设备无关、可离线复现。
+- **做了什么**：
+  - `src/device/adb.ts` 新增 `withDeadline(signal, ms, fn)`：用**平台原语** `AbortSignal.timeout(ms)` + `AbortSignal.any([...])` 组合出"调用方 signal 或超时"的合并信号，交给 `runNativeCommand`（由其负责 abort 时杀子进程）；**不自造 timer/spawn**（守 §2.2）。超时后统一抛 `adb 命令超时 timeout（>Nms，设备可能掉线）`，`retry.ts` 的 `isRetryable`（`/timeout/i`）可识别为瞬时错误重试。
+  - `adb()` 主通道与 `listDevices/discoverMdnsAddress/connect/mdns check` 等直连 `run()` 全部经 `withDeadline` 包裹；`stepTimeout = opts.stepTimeoutMs ?? 8000`。
+- **验证方式**：`pnpm check` **185/185 全绿**（+2 回归）；`test/device-p2.test.ts` 新增：①"hung adb command（设备掉线）经 stepTimeout 有限时间内失败、不无限挂起"（假 runner 仅在 abort 时结束，实测 ~2s 内抛 timeout 而非永久卡住）；②"stepTimeout 覆盖每条命令（含 screencap）"。改前该场景会挂到测试超时；改后确定性失败。
+- **是否影响已有行为**：否（正常命令远快于 8s 不受影响）；仅把"挂起→无限等待"变为"到点失败→可重试/可读报错"。`serial: auto` 的 mDNS 发现等仍工作（`listDevices` 走同一超时包装）。
+- **红线**：只读；未新增任何点击/支付路径。
+- **更新后状态**：设备中途掉线时任务会**快速失败并给可读原因**，不再整单挂死；真机端到端仍待平板重新上线（当前已离线，非代码问题）。
+
+---
+
+### [47] 2026-10-26 21:20 · feat(platform): 饿了么 canvas 全自动 **OCR 盲导航**（P6，`platform/ocrNav.ts` + `runElemeOcrNav`）
+
+- **为什么**：饿了么整 App canvas/TMS 自绘，`uiautomator dump` 无控件、无可点锚点，此前只能"已在结算页时 OCR 读数"，无法从首页自动走到结算。需一套"截图→OCR 逐词→按文案/坐标盲点"的通用原语，把搜索→选店→选规格→去结算→读实付全程自动化，同时守住 canvas 场景的支付红线（控件树为空时 `assertTapSafe` 抓不到画布文字）。
+- **做了什么**：
+  - `src/platform/ocrNav.ts`（新增，平台共享原语）：`createOcrNav(driver,ocr)` → `look/find/center/tapAt/swipe/typeText/key/waitFor`；`wordAtPoint/wordsNearPoint` 坐标取词；`assertOcrTapSafe` 用点击坐标**邻域 OCR 文字**做下单/支付关键词拦截（**canvas 场景唯一有效红线**）；`describeWords` 把末帧 OCR 压成带坐标的紧凑文本（失败自解释，省上下文）。
+  - `src/platform/elemeReal.ts`：新增 `ELEME_LAYOUT`（1600×2560 平板校准）、`supportsOcrNav`、`locateFirstDishY/locateFirstDishSpecY`（取菜单首菜 y，避开顶部促销价）、`isGroupOrderPage`（拼单详情页守卫：有合计/去结算但金额是整单总额，识别到即 `NeedsHumanError`，不误读、不自动取消他人拼单）、`runElemeOcrOnce/runElemeOcrNav`（整条重试，红线错误立即上抛）；`runElemeReal` 改为优先 OCR 盲导航、保留 navigator 兜底；`ocrAmountRightOf` 增 `prefer='right'`（合计行取**最右**金额，修"已优惠¥25.92 误当实付"）。**加购只点一次**（非幂等、有副作用）。
+  - `driver.ts` 增可选能力 `inputText/swipeRaw/key`；`adb.ts` 实现之（`input()` 复用 `inputText`）；`eleme.ts` 传 `driver` 而非 navigator。
+- **测试**：`test/ocrNav.test.ts`（14 例：坐标取词/邻域、canvas 支付红线拒绝与不误伤、验证码→NeedsHumanError、find ltr/rtl、waitFor 超时带末帧文本、describeWords、ELEME_LAYOUT、locateFirstDish(Spec)Y 回归、isGroupOrderPage 不误判）；`test/platform-p4.test.ts` +1（真机结算页 fixture `eleme-confirm.real-ocr.json`：合计行取最右 ¥16.98 而非已优惠 ¥25.92，且 14.98+2+3−3=16.98 平账）。
+- **验证方式**：`pnpm check` **185/185 全绿**。
+- **红线**：只读；canvas 每次点击前 `assertOcrTapSafe` 拦截支付/下单；拼单页即停交人工；加购只点一次；未触碰结算页「支付」。
+- **更新后状态**：饿了么 canvas **全自动导航链路代码就绪、离线测试全绿**；**真机端到端待平板重新上线复跑**（本轮设备离线受阻，非代码问题）。
+
+---
+
 ## 追加条目的模板（供后续每轮使用）
 
 ```markdown
@@ -602,4 +644,4 @@
 
 ---
 
-*最后更新：2026-10-26 14:42 +08:00*
+*最后更新：2026-10-26 21:30 +08:00*
