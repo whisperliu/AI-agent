@@ -585,7 +585,7 @@
 - **验证方式**：`pnpm check` **165/165 全绿**（+4 回归）；复现前 `dispatch` 回复经 `isJsonValue` 为 `false`，修复后为 `true`；用真实结果文件 `formatCompareResult` 渲染正常：`meituan ¥29.88 / high / 需复核=否`。
 - **是否影响已有行为**：否。仅清洗回复里的 `undefined`，`result`/`status`/`taskId` 等实体字段不变；`formatReply` 文本呈现不变。
 - **红线**：只读；未触碰支付；无验证码。
-- **更新后状态**：工具层 `getResult` 可正常返回比价表；**需重启 DSH web 进程（或加载了该插件的宿主）后生效**（Node 直跑 TS，无热重载）。
+- **更新后状态**：工具层 `getResult` 可正常返回比价表；**需重启 DSH web 进程（或加载了该插件的宿主）后生效**（Node 直跑 TS，无热重载）。**2026-10-26 14:42 用户重启后已实测生效**：`probe` OK；对旧任务 `getResult` 正常返回（说明修复已加载）；再走完整链路 `start → 后台 completed → getResult` 返回 `meituan ¥29.88 / high / 需复核=否`，新任务证据 `redaction=applied`、截图存在。
 
 ---
 
@@ -602,4 +602,4 @@
 
 ---
 
-*最后更新：2026-10-26 14:37 +08:00*
+*最后更新：2026-10-26 14:42 +08:00*

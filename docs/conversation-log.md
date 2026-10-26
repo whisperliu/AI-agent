@@ -276,6 +276,7 @@
 - **生效条件**：Node 直跑 TS 无热重载，**需重启 DSH web 进程**后 `getResult` 才返回正常。
 - **红线**：只读；未触碰支付；无验证码。
 - **状态**：`ok(定位并修复工具层序列化 bug，真机读数本身正常)`
+- **重启后验证（2026-10-26 14:42）**：用户重启 DSH web 后实测——`probe` OK；旧任务 `getResult` 正常返回（证明修复已加载）；完整链路 `start(force) → 后台 completed → getResult` 返回 `meituan ¥29.88 / high / 需复核=否`；新任务 `payable=29.88 balanced=true confidence=high needsConfirm=false`、证据 `redaction=applied`、截图存在。工具层比价链路端到端可用 ✅
 
 
 ---
