@@ -266,6 +266,17 @@
 - **红线**：全程只读，未点提交/支付（「极速支付」未触碰），无验证码本轮出现；证据仅落 `.price-agent/diag/run/`（已 gitignore）。
 - **状态**：`ok(再复跑 PASS，读数稳定；收尾已提交并 push)`
 
+### 轮次 29 · 真机 GUI 实跑发现 `getResult` 输出 bug + 修复（2026-10-26）✅
+- **意图**：用户「现在可以正常比价吗」→ 用 GUI 的 `price_agent` 工具实跑真机验证。
+- **发现（真实 bug）**：`probe`/`start` 正常、后台任务也 `completed`，但 **`getResult` 报 `tool "price_agent" returned invalid output: value is not lossless JSON`**，取不回比价表。根因：`getResult` 回复在截图未清理时带 `note: undefined`（非完成态带 `error: undefined`；`listTasks` 行 `finishedAt` 也可能缺省），DSH 的 lossless 校验严格拒绝 `undefined` → 整份工具输出被判非法。此前都直接用脚本调 `runCompare`，未走工具返回值层，故未暴露。
+- **修复**：`src/tools/price-agent.ts` 新增 `toLosslessJson()`（丢对象内 `undefined`、数组内 `undefined`→`null`），`getResult`/`listTasks` 回复与 `execute` 返回值统一清洗。
+- **回归测试**：`test/lifecycle.test.ts` +4 例，直接用 `@deepseek-ai/dsh-util-values` 的 `isJsonValue` 断言 DSH 同款规则（修复前 false / 修复后 true）。
+- **验证**：`pnpm check` **165/165 全绿**；用真实结果文件 `formatCompareResult` 渲染正常 `meituan ¥29.88 / high / 需复核=否`。
+- **真机读数（本轮 GUI 发起的那次任务）**：`payable=¥29.88`、`effectivePrice=¥29.88`、`balanced=true`、`confidence=high`、`needsConfirm=false`；账目 34.78−3.9−1=29.88；15 元红包 `presumed` 不抵扣；证据 `redaction=applied`。与脚本复跑一致。
+- **生效条件**：Node 直跑 TS 无热重载，**需重启 DSH web 进程**后 `getResult` 才返回正常。
+- **红线**：只读；未触碰支付；无验证码。
+- **状态**：`ok(定位并修复工具层序列化 bug，真机读数本身正常)`
+
 
 ---
 
@@ -314,6 +325,7 @@
     {"n":26,"at":"10-24 21:30","user":"应对没有跑通的问题怎么处理？/ 先中断，收尾，记录检测到哪里了，明天继续","intent":"追查真机端到端跑不通的根因 + 交接","result":"定位并修复 6 个真机 bug(启动App/回首页/dump陈旧/重试/首页锚点/坐标)+新增窗口几何与坐标映射与分屏守卫;卡点为平板 PC/桌面模式浮窗 appX 漂移(环境问题,守卫正确拦截);写 docs/HANDOFF-device-p5.md 交接","verify":"pnpm check 161/161;device-p2 35 用例;真机仍未跑通(如实记录)","status":"paused(待用户切回全屏竖屏后复测)"},
     {"n":27,"at":"10-25 10:40","user":"继续昨天的操作 / 提交，更新端口","intent":"真机端到端复测 + 结项","result":"mDNS 自动发现平板实际地址 192.168.3.44:39079 并连上;环境自检为全屏竖屏(inPcmode=0);冷启动遇拼图滑块即停由用户过;补 unicodeIme 后 runCompare 真机全流程一步跑通;CHANGELOG[42]+tasks 进度✅+HANDOFF 结项+profile serial 更新","verify":"真机 payable=29.88 balanced=true confidence=high needsConfirm=false;账目 34.78-3.9-1=29.88;15元红包标 presumed 不抵扣;脱敏证据 applied;pnpm check 161/161","status":"ok(真机端到端 PASS)"},
     {"n":28,"at":"10-26 14:12","user":"四选全选(收尾提交/serial改auto/push/复跑真机)","intent":"收尾提交 + 修正运行时 serial + push + 再复跑真机","result":"docs 提交 2b42431;profile serial 旧:44881→auto(mDNS自动发现),并更正 CHANGELOG[42] 不准确表述;push 43d6ea0..2b42431 同步 origin;平板重开后 mDNS 发现端口变为 :38229,普通 am start 拉美团前台(设置分屏任务不影响聚焦窗 fullscreen)后真机全流程再跑通","verify":"真机 payable=29.88 balanced=true confidence=high needsConfirm=false;账目 34.78-3.9-1=29.88;15元红包 presumed 不抵扣;证据 redaction=applied;pnpm check 161/161","status":"ok(再复跑 PASS)"},
+    {"n":29,"at":"10-26 14:37","user":"现在可以正常比价吗","intent":"GUI 工具实跑真机验证 + 修复 getResult 输出 bug","result":"probe/start 正常、任务 completed,但 getResult 报 not lossless JSON(reply 带 note/error undefined,DSH 严格拒 undefined);新增 toLosslessJson 清洗 getResult/listTasks/execute;+4 回归用例(isJsonValue 断言)","verify":"pnpm check 165/165;真实结果文件 formatCompareResult 渲染 meituan ¥29.88 high 需复核=否;真机读数 29.88 balanced=true;需重启 DSH web 生效","status":"ok(修复工具层序列化 bug)"},
   ],
   "fixes": [
     {"topic":"job owner","file":"src/core/jobs-adapter.ts","detail":"owner=exec.agent.id 贯通"},
@@ -342,4 +354,4 @@
 
 ---
 
-*会话快照：2026-10-26 14:12 · 分支 `main`（与 origin 同步，HEAD `2b42431`）；**P0–P5 完成，且真机端到端已闭环（2026-10-25）并二次复跑通过（2026-10-26）**。里程碑：**P2 真机 §8.4 PASS（Lenovo TB321FU / Android 16）**；**P3 美团真机全流程 PASS**（payable=19.9 balanced、confidence=high）；**P4 多平台 + 策略四态 + 谨慎互斥 + 统一输入快照分组**（DoD①②③④ 均落地）；**P4 真机复测** 饿了么 canvas 自绘 → ROI OCR，真机 payable=¥20.8；**P5 打磨（一/二/三）**：`device/redact.ts` 零依赖 PNG 截图脱敏（真机 mt-s6 `masked=2` 对照确认涂黑、无法脱敏则不落图）、`task/cleanup.ts` 证据/结果 TTL+保留上限清理、`core/retry.ts` 瞬时重试（**验证码/支付绝不重试**）、`runner.bindEvidence` 证据真实绑定（dump+脱敏图+OCR 逐词框）、`device/capture.ts` 失败取证同样默认脱敏、`device/adb.ts` 无线调试 mDNS 自动发现/回连（修旧 host:port 失效）。**2026-10-25 真机端到端复测 PASS**：平板切回全屏竖屏后 `runCompare` 一步跑通 —— **payable=¥29.88、balanced=true、confidence=high、needsConfirm=false**，账目 34.78−3.9−1=29.88 平账、15 元待使用红包标 `presumed` 不抵扣、证据脱敏 `applied`；昨日 6 个真机修复全部生效，卡点确认为设备环境（已解除）。门禁 `pnpm check` **161/161 全绿**、`src/price` 行覆盖 **97.15%**。安全红线全程未触碰（无下单/支付路径、验证码即停零点击、仓内仅脱敏 fixture）。*
+*会话快照：2026-10-26 14:37 · 分支 `main`（含 getResult 修复，待提交）；**P0–P5 完成，且真机端到端已闭环（2026-10-25）并二次复跑通过（2026-10-26）**。里程碑：**P2 真机 §8.4 PASS（Lenovo TB321FU / Android 16）**；**P3 美团真机全流程 PASS**（payable=19.9 balanced、confidence=high）；**P4 多平台 + 策略四态 + 谨慎互斥 + 统一输入快照分组**（DoD①②③④ 均落地）；**P4 真机复测** 饿了么 canvas 自绘 → ROI OCR，真机 payable=¥20.8；**P5 打磨（一/二/三）**：`device/redact.ts` 零依赖 PNG 截图脱敏（真机 mt-s6 `masked=2` 对照确认涂黑、无法脱敏则不落图）、`task/cleanup.ts` 证据/结果 TTL+保留上限清理、`core/retry.ts` 瞬时重试（**验证码/支付绝不重试**）、`runner.bindEvidence` 证据真实绑定（dump+脱敏图+OCR 逐词框）、`device/capture.ts` 失败取证同样默认脱敏、`device/adb.ts` 无线调试 mDNS 自动发现/回连（修旧 host:port 失效）。**2026-10-25 真机端到端复测 PASS**：平板切回全屏竖屏后 `runCompare` 一步跑通 —— **payable=¥29.88、balanced=true、confidence=high、needsConfirm=false**，账目 34.78−3.9−1=29.88 平账、15 元待使用红包标 `presumed` 不抵扣、证据脱敏 `applied`；昨日 6 个真机修复全部生效，卡点确认为设备环境（已解除）。门禁 `pnpm check` **165/165 全绿**、`src/price` 行覆盖 **97.15%**。**2026-10-26 修复 `getResult` 工具输出被 DSH 判「not lossless JSON」（清洗 undefined 字段，+4 回归用例）**。安全红线全程未触碰（无下单/支付路径、验证码即停零点击、仓内仅脱敏 fixture）。*

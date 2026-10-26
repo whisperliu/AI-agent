@@ -49,6 +49,19 @@ export type PriceAgentReply =
   | { action: 'probe'; reply: DeviceProbeReply }
   | { action: 'selfCheck'; reply: MinExperimentReply }
 
+/**
+ * 清洗成 DSH 认可的「lossless JSON」：DSH 严格拒绝 `undefined`（对象里的可选字段、数组元素），
+ * 也拒绝 `NaN`/`Infinity`/`-0`、`Date`、类实例等不可无损 JSON 的值。
+ *
+ * 背景（P5 回归）：`getResult` 的 reply 常带 `note: undefined`（证据未清理时）、
+ * 非完成态带 `error: undefined`；`listTasks` 行的 `finishedAt` 也可能缺省。
+ * 这些 `undefined` 会让整个工具输出被判 `invalid output: value is not lossless JSON`，
+ * 模型侧拿不到结果。此处在返回前做一次无损 JSON 往返清洗（丢 `undefined`、NaN→null）。
+ */
+export function toLosslessJson<T>(value: T): JsonValue {
+  return JSON.parse(JSON.stringify(value)) as JsonValue
+}
+
 /** 业务分派（可离线单测；不经过 defineTool / ToolRunContext）。 */
 export async function dispatch(
   deps: Deps,
@@ -75,11 +88,11 @@ export async function dispatch(
     case 'getResult': {
       if (!args.taskId) throw new Error('getResult 需要 taskId')
       const reply = await getResult(deps, args.taskId)
-      return { action: 'getResult', reply }
+      return { action: 'getResult', reply: toLosslessJson(reply) as unknown as GetResultReply }
     }
     case 'listTasks': {
       const reply = listTasks(deps, ctx?.owner)
-      return { action: 'listTasks', reply }
+      return { action: 'listTasks', reply: toLosslessJson(reply) as unknown as TaskSummary[] }
     }
     case 'cancel': {
       if (!args.taskId) throw new Error('cancel 需要 taskId')
@@ -227,7 +240,8 @@ export function priceAgentTool(deps: Deps): ToolDefinition {
     async execute(args, exec): Promise<JsonValue> {
       const owner = exec.agent?.id
       const reply = await dispatch(deps, args as unknown as PriceAgentArgs, { owner })
-      return reply as unknown as JsonValue
+      // 最后一道兜底：任何 action 的可选字段缺省（undefined）都清洗掉，避免整个工具输出被判非法。
+      return toLosslessJson(reply)
     },
   })
 }
