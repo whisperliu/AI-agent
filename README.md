@@ -8,7 +8,7 @@ DSH 插件：在你自己的 Android 手机上打开外卖 App（美团 / 饿了
 
 ## 状态
 
-**P0–P5 完成**：纯核心 + 插件骨架/异步任务/Mock 全链路（P0/P1）→ 真机通道（P2）→ 美团真机全流程抓价（P3）→ 多平台（饿了么）+ 策略四态 + 谨慎互斥 + 统一输入快照分组（P4）→ **P5 打磨**（截图默认脱敏、证据 TTL/保留清理、瞬时异常重试、证据真实绑定、无线调试 mDNS 自动回连）。`pnpm check` 全绿（154 tests，`src/price` 行覆盖 97.15%）。
+**P0–P6 完成**：纯核心 + 插件骨架/异步任务/Mock 全链路（P0/P1）→ 真机通道（P2）→ 美团真机全流程抓价（P3）→ 多平台（饿了么）+ 策略四态 + 谨慎互斥 + 统一输入快照分组（P4）→ **P5 打磨**（截图默认脱敏、证据 TTL/保留清理、瞬时异常重试、证据真实绑定、无线调试 mDNS 自动回连）→ **P6 饿了么 canvas OCR 盲导航**（`platform/ocrNav.ts`：截图→OCR 逐词→按文案/坐标盲点，canvas 支付红线 `assertOcrTapSafe`，拼单页守卫；全流程离线回放已覆盖，真机端到端待设备上线复跑）。`pnpm check` 全绿（**189 tests**，`src/price` 行覆盖 97.15%）。
 
 文档：总纲 [PLAN.md](./PLAN.md) · 模块规范 [docs/module-spec.md](./docs/module-spec.md) · **每模块说明 [docs/modules/](./docs/modules/README.md)** · 任务与验收 [docs/tasks.md](./docs/tasks.md) · 决策 [docs/decisions.md](./docs/decisions.md) · 变更 [CHANGELOG.md](./CHANGELOG.md)。
 

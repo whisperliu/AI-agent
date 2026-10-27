@@ -561,7 +561,7 @@ export function supportsOcrNav(driver: Driver): boolean {
   )
 }
 
-const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms))
+const sleepMs = (ms: number): Promise<void> => new Promise<void>((r) => setTimeout(r, ms))
 
 /** 菜单区（店铺页菜品列表）的屏幕 y 范围，用于把促销/顶部元素挡在外面。 */
 const MENU_Y_MIN = 850
@@ -616,10 +616,11 @@ export function isGroupOrderPage(words: OcrWord[]): boolean {
  * 由 `runElemeOcrNav` 捕获后**整条重试**（比"等待失败仍盲点"稳：一旦某步错位，后面全乱）。
  * 每次 `look()` 内以 OCR 文本拦验证码/登录（canvas 控件树无文字，这是唯一有效防线）。
  */
-async function runElemeOcrOnce(
+export async function runElemeOcrOnce(
   driver: Driver,
   ocr: Ocr,
   cond: ComparisonConditions,
+  sleep: (ms: number) => Promise<void> = sleepMs,
 ): Promise<RawQuoteFacts> {
   const nav = createOcrNav(driver, ocr)
   const L = ELEME_LAYOUT
@@ -627,7 +628,7 @@ async function runElemeOcrOnce(
 
   // 1) 强制重启饿了么回首页（避开上次页面残留）。
   if (driver.launchApp) await driver.launchApp('me.ele', { force: true })
-  await sleepMs(3500)
+  await sleep(3500)
   let words = await nav.waitFor(
     (ws) => /推荐|美食外卖|搜索|点外卖/.test(allText(ws)),
     '饿了么首页',
@@ -636,16 +637,16 @@ async function runElemeOcrOnce(
 
   // 2) 首页 → 点搜索框 → 搜索页。
   await nav.tapAt(words, L.homeSearch, '首页搜索框')
-  await sleepMs(2000)
+  await sleep(2000)
   words = await nav.waitFor((ws) => /历史搜索|搜索发现|搜索/.test(allText(ws)), '搜索页', 6000)
 
   // 3) 点输入框 → 注入菜品关键词 → ENTER 提交。
   await nav.tapAt(words, L.searchInput, '搜索输入框')
-  await sleepMs(800)
+  await sleep(800)
   await nav.typeText(cond.item)
-  await sleepMs(1200)
+  await sleep(1200)
   await nav.key(L.enterKey)
-  await sleepMs(3500)
+  await sleep(3500)
   words = await nav.waitFor(
     (ws) => /销量|综合|起送|预估|月售|木桶|小炒|店/.test(allText(ws)),
     '搜索结果页',
@@ -654,7 +655,7 @@ async function runElemeOcrOnce(
 
   // 4) 点第一家店（店铺标题坐标）。
   await nav.tapAt(words, { x: 342, y: 400 }, '第一家店')
-  await sleepMs(3500)
+  await sleep(3500)
   words = await nav.waitFor(
     (ws) => /点餐|公告|选规格|预估|去结算/.test(allText(ws)),
     '店铺页',
@@ -678,7 +679,7 @@ async function runElemeOcrOnce(
   //    否则如实失败（宁可返回低置信/让他人复核，也绝不乱加菜）。
   const specY = locateFirstDishSpecY(words, L.storeFirstDishSpec.y)
   await nav.tapAt(words, { x: L.storeFirstDishSpec.x, y: specY }, '首个菜-选规格')
-  await sleepMs(2200)
+  await sleep(2200)
   // 点完「选规格」若落到拼单详情页（无规格弹窗、有「拼单/邀请好友」）→ 立即交人工，绝不重试盲点。
   words = await nav.look()
   if (isGroupOrderPage(words)) {
@@ -689,12 +690,12 @@ async function runElemeOcrOnce(
   }
   words = await nav.waitFor((ws) => /份量|辣度|选好了|数量/.test(allText(ws)), '规格弹窗', 6000)
   await nav.tapAt(words, L.pickDone, '选好了')
-  await sleepMs(2200)
+  await sleep(2200)
 
   // 6) 去结算（按钮文案在真机上是「领券结算 / 去结算」，都有"结算"）。
   words = await nav.waitFor((ws) => /结算|购物车|券后/.test(allText(ws)), '购物车栏', 6000)
   await nav.tapAt(words, L.goSettle, '去结算')
-  await sleepMs(4000)
+  await sleep(4000)
 
   // 7) 结算页 → OCR 读实付（绝不点「支付」）。
   words = await nav.waitFor(
@@ -729,15 +730,16 @@ export async function runElemeOcrNav(
   ocr: Ocr,
   cond: ComparisonConditions,
   attempts = 3,
+  sleep: (ms: number) => Promise<void> = sleepMs,
 ): Promise<RawQuoteFacts> {
   let lastErr: unknown
   for (let i = 0; i < attempts; i++) {
     try {
-      return await runElemeOcrOnce(driver, ocr, cond)
+      return await runElemeOcrOnce(driver, ocr, cond, sleep)
     } catch (err) {
       if (err instanceof NeedsHumanError || err instanceof ForbiddenActionError) throw err
       lastErr = err
-      await sleepMs(500)
+      await sleep(500)
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error('饿了么 OCR 盲导航失败')
