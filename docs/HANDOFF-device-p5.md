@@ -158,8 +158,8 @@ adb devices   # 期望看到 adb-XXXX._adb-tls-connect._tcp  device
 ## 6. 当前仓库状态
 
 - **已结项（2026-10-25）**：真机端到端 PASS，见 `CHANGELOG[42]`。
-- 门禁：`pnpm check` **189/189 全绿**（2026-10-27 补 P6 离线全流程回放 +4）；`src/price` 行覆盖 97.15%
-- P6 代码/离线：`platform/ocrNav.ts` + `elemeReal.runElemeOcrNav` + `test/ocrNavFlow.test.ts`（见 §8 待复跑清单）
+- 门禁：`pnpm check` **192/192 全绿**（2026-10-27 补 P6 离线回放/加购幂等/ROI 共 +7）；`src/price` 行覆盖 97.15%
+- P6 真机：**2026-10-27 端到端 PASS ✅**（`payable=¥13.98`、`delta=0`）；`platform/ocrNav.ts` + `elemeReal.runElemeOcrNav` + `test/ocrNavFlow.test.ts`（见 §8）
 - 安全红线：全程只读；未点任何提交/支付控件；未尝试破解验证码（拼图滑块由用户本人完成）；
   未自动修改窗口布局（只做检测并交人工）
 
@@ -179,7 +179,27 @@ adb devices   # 期望看到 adb-XXXX._adb-tls-connect._tcp  device
 | 备注 | `adb shell input text` 中文会 NPE → 必须配 `unicodeIme=com.android.adbkeyboard/.AdbIME` |
 
 ---
-## 8. P6（饿了么 canvas OCR 盲导航）待复跑清单（2026-10-27 记录）
+## 8. P6（饿了么 canvas OCR 盲导航）—— **2026-10-27 真机端到端 PASS ✅**（下为留档复跑清单）
+
+> **结论**：真机全自动链路 `首页→搜索→选店→选规格→加购→去结算→读实付` 已跑通：
+> `payable=¥13.98`、`confidence=medium`、`delta=0.00`（2+9+11.98=22.98 − 免配送费 9 = 13.98），
+> 与结算页「立即支付 ¥13.98」一致，耗时 87.6s。期间修了两个真机缺陷（慢设备 waitFor 零重试、整条重试重复加购），
+> 详见 `CHANGELOG[49]`。以下清单保留供换机/复跑时使用。
+
+### ⚠️ 复跑前必读（本轮踩过的坑）
+1. **饿了么需要网络+定位就绪才渲染**：设备无网或定位未开时，首页/地址/我的全部长时间停在**灰色骨架屏**（截图只有灰块），
+   极易误判成"canvas 抓不到内容"。本轮美团同机完全正常 → 先确认 `cmd location is-location-enabled` 为 true、
+   `dumpsys location` 有 `last location`（本轮 31.198,121.627）、`ping h5.ele.me` 通。
+2. **adb server 会随 shell 退出而消失**：每次调用都要在**同一次命令内** `adb start-server` → 等 `adb devices` 出现 → 再操作。
+   容器内 `HOME` 必须是默认的 `/home/liuqiaoqiao`（配对密钥在 `~/.android`）；用 `HOME=$PWD/.home` 会因密钥不同而连不上。
+3. **OCR 模型缓存**：`chi_sim.traineddata` 需在 `.price-agent/ocr-cache/`（本轮已放入，2.4MB）；缺失时 tesseract 会去
+   jsdelivr 下载并在弱网下失败。`screen-inspect.mjs` 与 diag 脚本都指向该目录。
+4. **加购会累积**：`runElemeOcrOnce` 开头会 force-stop 重启 App，但**购物车不清**。连跑多次会不断+1 件，
+   读数随之虚高（本轮曾读到 44.96/125.92）。每次正式复跑前先手动清空购物车，或只用一次 `attempts=1`。
+5. **全屏 OCR 6.2s/帧**，别用整屏图判页面（省上下文）：用 `node scripts/screen-inspect.mjs <png> --ocr --roi ...`。
+
+### 复跑清单（原）
+
 
 > 代码与**离线全流程回放**已完成（`test/ocrNavFlow.test.ts`，4 例）；仅差真机端到端。平板一上线按下面顺序跑即可。
 

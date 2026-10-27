@@ -20,8 +20,12 @@ import { FORBIDDEN_TEXTS } from '../core/safety.ts'
 export type Point = { x: number; y: number }
 
 export interface OcrNav {
-  /** 截屏 + OCR，返回逐词（bbox 为屏幕像素绝对坐标）。 */
-  look(): Promise<OcrWord[]>
+  /**
+   * 截屏 + OCR，返回逐词（bbox 为屏幕像素绝对坐标）。
+   * `roi` 只识别屏幕某矩形：慢设备全屏 OCR 可达 6s/帧，底部条等固定区域用 ROI 仅 ~1s，
+   * 使等待轮询能真正高频（配合 `waitFor(pred, what, ms, roi)` 缩短"等按钮出现"的延迟）。
+   */
+  look(roi?: OcrBox): Promise<OcrWord[]>
   /** 当前界面控件树节点（canvas 上通常很少，仅用于截图前的页面粗判/兜底）。 */
   nodes(): Promise<UiNode[]>
   /** 找文案命中正则的 OCR 词；按 readDir 取最靠前/后一个（默认从前）。 */
@@ -48,6 +52,7 @@ export interface OcrNav {
     predicate: (words: OcrWord[]) => boolean,
     what: string,
     timeoutMs?: number,
+    roi?: OcrBox,
   ): Promise<OcrWord[]>
 }
 
@@ -99,9 +104,9 @@ function assertNoHuman(words: OcrWord[]): void {
 export function createOcrNav(driver: Driver, ocr: Ocr, opts: { timeoutMs?: number } = {}): OcrNav {
   const timeoutMs = opts.timeoutMs ?? 8000
 
-  async function look(): Promise<OcrWord[]> {
+  async function look(roi?: OcrBox): Promise<OcrWord[]> {
     const png = await driver.screencap()
-    const res = await ocr.read(png)
+    const res = await ocr.read(png, roi)
     assertNoHuman(res.words)
     return res.words.filter((w) => (w.t ?? '').trim().length > 0)
   }
@@ -161,17 +166,36 @@ export function createOcrNav(driver: Driver, ocr: Ocr, opts: { timeoutMs?: numbe
     predicate: (words: OcrWord[]) => boolean,
     what: string,
     perTimeout = timeoutMs,
+    roi?: OcrBox,
   ): Promise<OcrWord[]> {
+    // ⚠️ 慢设备适配（2026-10-27 真机实测）：全屏 canvas OCR 单帧可达 **6.2s**（1600×2560 / WASM），
+    // 原来的固定 6–8s 预算只够看**一帧**；OCR 稍抖（一帧读歪）就直接判超时、零重试。
+    // 这与 device 层「waitForAnyState 保证至少 2 次 dump」是同一类缺陷（见 CHANGELOG[41] 第 5 条）。
+    // 修法：① 至少看 2 帧；② 预算按**实测单帧耗时**动态放大（≥2.5 帧 + 1.5s 余量），不写死。
     const start = Date.now()
-    let last: OcrWord[] = []
-    while (Date.now() - start < perTimeout) {
-      last = await look()
+    let last: OcrWord[]
+    let looks = 0
+    let deadline = perTimeout
+    while (true) {
+      const t0 = Date.now()
+      last = await look(roi)
+      looks++
+      if (looks === 1) {
+        const firstLookMs = Date.now() - t0
+        deadline = Math.max(perTimeout, Math.round(firstLookMs * 2.5) + 1500)
+      }
       if (predicate(last)) return last
-      await new Promise((r) => setTimeout(r, 400))
+      // 至少 2 次 look（慢设备上单帧就可能吃掉整个预算）；之后按动态 deadline 收尾。
+      if (looks >= 2 && Date.now() - start >= deadline) break
+      if (looks >= 8) break // 硬上限，避免异常页面无限重试
+      await new Promise((r) => setTimeout(r, 300))
     }
     // 省上下文（AGENTS.md §2）：超时报错时把**最后读到的文本**（带坐标、截断）一并抛出。
     // 这样排查"卡在哪一页"只看异常文本即可，**不必**再去 read_image 读整屏截图。
-    throw new Error(`OCR 等待超时：${what}（最后读到 ${last.length} 词）` + describeWords(last))
+    throw new Error(
+      `OCR 等待超时：${what}（看了 ${looks} 帧 / 预算 ${Math.round(deadline / 1000)}s，最后读到 ${last.length} 词）` +
+        describeWords(last),
+    )
   }
 
   return { look, nodes, find, center, tapAt, swipe, typeText, key, waitFor }

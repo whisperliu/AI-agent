@@ -16,7 +16,7 @@ import { parseUiNodes } from '../device/uixml.ts'
 import type { UiSelector } from '../device/driver.ts'
 import type { Driver } from '../device/driver.ts'
 import type { ComparisonConditions, DiscountKind, FeeKind, OptionalSaving } from '../price/model.ts'
-import type { Ocr, OcrWord } from '../ocr/reader.ts'
+import type { Ocr, OcrBox, OcrWord } from '../ocr/reader.ts'
 import { itemScore } from '../price/similarity.ts'
 import { ELEME_SELECTORS } from './selectors/eleme.ts'
 import type { Navigator } from './navigator.ts'
@@ -552,6 +552,15 @@ export const ELEME_LAYOUT = {
   enterKey: 66, // ENTER：提交搜索
 } as const
 
+/**
+ * 常用 ROI（屏幕坐标）。**慢设备关键优化**：全屏 OCR ~6s/帧，底部条仅 ~1s，
+ * 用它轮询"去结算/领券结算"这类底部按钮，能把等待从"3 帧/18s"提升到"多帧/6s"，显著降低转场误判。
+ */
+export const ELEME_ROI = {
+  /** 底部操作条（购物车合计 + 去结算/领券结算）。 */
+  bottomBar: { x: 0, y: 2150, w: 1600, h: 410 } as OcrBox,
+} as const
+
 /** 是否具备 OCR 盲导航所需能力（真机 adb：tapPoint + inputText + key + screencap）。 */
 export function supportsOcrNav(driver: Driver): boolean {
   return (
@@ -562,6 +571,20 @@ export function supportsOcrNav(driver: Driver): boolean {
 }
 
 const sleepMs = (ms: number): Promise<void> => new Promise<void>((r) => setTimeout(r, ms))
+
+/**
+ * 跨「整条重试」共享的加购状态（**红线**）。
+ *
+ * 背景（2026-10-27 真机）：`runElemeOcrNav` 的重试是"整条重走"。若失败点在**加购之后**（如等购物车栏超时），
+ * 下一次重试会再点一次「选规格」→ 同一道菜被重复加进购物车（真机实测加到 **×4**）。
+ * 加购有副作用、非幂等，**绝不能重试**。故：加购一旦发生，后续重试跳过加购步骤（只重走导航）。
+ */
+interface AddToCartState {
+  /** 是否已经成功加购（成功后重试不得再加）。 */
+  added: boolean
+  /** 本次任务是否已尝试过点「选规格」（用于决定重试是否需要先清空购物车）。 */
+  specTapped: boolean
+}
 
 /** 菜单区（店铺页菜品列表）的屏幕 y 范围，用于把促销/顶部元素挡在外面。 */
 const MENU_Y_MIN = 850
@@ -621,6 +644,7 @@ export async function runElemeOcrOnce(
   ocr: Ocr,
   cond: ComparisonConditions,
   sleep: (ms: number) => Promise<void> = sleepMs,
+  state: AddToCartState = { added: false, specTapped: false },
 ): Promise<RawQuoteFacts> {
   const nav = createOcrNav(driver, ocr)
   const L = ELEME_LAYOUT
@@ -632,13 +656,13 @@ export async function runElemeOcrOnce(
   let words = await nav.waitFor(
     (ws) => /推荐|美食外卖|搜索|点外卖/.test(allText(ws)),
     '饿了么首页',
-    10000,
+    20000,
   )
 
   // 2) 首页 → 点搜索框 → 搜索页。
   await nav.tapAt(words, L.homeSearch, '首页搜索框')
   await sleep(2000)
-  words = await nav.waitFor((ws) => /历史搜索|搜索发现|搜索/.test(allText(ws)), '搜索页', 6000)
+  words = await nav.waitFor((ws) => /历史搜索|搜索发现|搜索/.test(allText(ws)), '搜索页', 15000)
 
   // 3) 点输入框 → 注入菜品关键词 → ENTER 提交。
   await nav.tapAt(words, L.searchInput, '搜索输入框')
@@ -650,7 +674,7 @@ export async function runElemeOcrOnce(
   words = await nav.waitFor(
     (ws) => /销量|综合|起送|预估|月售|木桶|小炒|店/.test(allText(ws)),
     '搜索结果页',
-    8000,
+    20000,
   )
 
   // 4) 点第一家店（店铺标题坐标）。
@@ -659,7 +683,7 @@ export async function runElemeOcrOnce(
   words = await nav.waitFor(
     (ws) => /点餐|公告|选规格|预估|去结算/.test(allText(ws)),
     '店铺页',
-    8000,
+    20000,
   )
 
   // 4.5) 店铺页状态守卫：若该商品已存在**进行中的拼单**，点「选规格」会直接进「拼单详情」而非规格弹窗；
@@ -674,26 +698,44 @@ export async function runElemeOcrOnce(
   }
 
   // 5) 加购：点首个菜「选规格」→ 弹窗「选好了」。
-  //    ⚠️ 红线：**只点一次**。点多个候选 y 会把不同菜品逐个加进购物车（真机踩过：一次误加 3 个菜）——
-  //    加购是有副作用、非幂等的操作。故这里只按"首个菜品行"点一次，且**必须等到规格弹窗**，
-  //    否则如实失败（宁可返回低置信/让他人复核，也绝不乱加菜）。
-  const specY = locateFirstDishSpecY(words, L.storeFirstDishSpec.y)
-  await nav.tapAt(words, { x: L.storeFirstDishSpec.x, y: specY }, '首个菜-选规格')
-  await sleep(2200)
-  // 点完「选规格」若落到拼单详情页（无规格弹窗、有「拼单/邀请好友」）→ 立即交人工，绝不重试盲点。
-  words = await nav.look()
-  if (isGroupOrderPage(words)) {
-    throw new NeedsHumanError(
-      'environment',
-      '点「选规格」后进入「拼单详情」而非规格弹窗（该菜已在拼单中）；请先在饿了么取消/完成该拼单后重试',
+  //    ⚠️ 红线：**整单只加购一次**。加购有副作用、非幂等——点多个候选 y 会逐个加菜（真机踩过：一次误加 3 个菜）；
+  //    整条重试也会重复加（2026-10-27 真机：同一道菜加到 ×4）。故用跨重试的 `state.added` 去重：
+  //    一旦加购成功，后续重试**跳过加购**，只重走「去结算→读实付」。
+  if (state.added) {
+    // 已加购：本次重试无需再点「选规格」，直接去结算。
+    words = await nav.waitFor(
+      (ws) => /结算|购物车|券后/.test(allText(ws)),
+      '购物车栏',
+      20000,
+      ELEME_ROI.bottomBar,
+    )
+  } else {
+    const specY = locateFirstDishSpecY(words, L.storeFirstDishSpec.y)
+    state.specTapped = true
+    await nav.tapAt(words, { x: L.storeFirstDishSpec.x, y: specY }, '首个菜-选规格')
+    await sleep(2200)
+    // 点完「选规格」若落到拼单详情页（无规格弹窗、有「拼单/邀请好友」）→ 立即交人工，绝不重试盲点。
+    words = await nav.look()
+    if (isGroupOrderPage(words)) {
+      throw new NeedsHumanError(
+        'environment',
+        '点「选规格」后进入「拼单详情」而非规格弹窗（该菜已在拼单中）；请先在饿了么取消/完成该拼单后重试',
+      )
+    }
+    words = await nav.waitFor((ws) => /份量|辣度|选好了|数量/.test(allText(ws)), '规格弹窗', 15000)
+    await nav.tapAt(words, L.pickDone, '选好了')
+    // 到这一步即视为**已下单成功**：立刻置位，保证后续任何重试都不再点加购。
+    state.added = true
+    await sleep(2200)
+    words = await nav.waitFor(
+      (ws) => /结算|购物车|券后/.test(allText(ws)),
+      '购物车栏',
+      20000,
+      ELEME_ROI.bottomBar,
     )
   }
-  words = await nav.waitFor((ws) => /份量|辣度|选好了|数量/.test(allText(ws)), '规格弹窗', 6000)
-  await nav.tapAt(words, L.pickDone, '选好了')
-  await sleep(2200)
 
   // 6) 去结算（按钮文案在真机上是「领券结算 / 去结算」，都有"结算"）。
-  words = await nav.waitFor((ws) => /结算|购物车|券后/.test(allText(ws)), '购物车栏', 6000)
   await nav.tapAt(words, L.goSettle, '去结算')
   await sleep(4000)
 
@@ -701,7 +743,7 @@ export async function runElemeOcrOnce(
   words = await nav.waitFor(
     (ws) => /合计|实付|配送费|打包费|支付/.test(allText(ws)),
     '结算页',
-    8000,
+    20000,
   )
   // 守卫：「拼单详情」页同样有「合计/去结算」，若误入会把这**整单拼单总额**当成本菜实付 → 必须拦住不读。
   if (isGroupOrderPage(words)) {
@@ -724,6 +766,9 @@ export async function runElemeOcrOnce(
 /**
  * 饿了么 OCR 盲导航主流程：整体最多尝试 `attempts` 次（每次都是完整走查）。
  * 验证码/登录/支付红线**立即上抛**（绝不重试）；其它失败（OCR 抖动/页面未就绪）改进程内重试。
+ *
+ * ⚠️ 红线：加购**非幂等**——重试时若已加过购，必须跳过加购（见 `AddToCartState`），
+ * 否则同一道菜会被重复加入购物车（真机实测 ×4）。故 `state` 需跨整个重试循环共享。
  */
 export async function runElemeOcrNav(
   driver: Driver,
@@ -733,12 +778,20 @@ export async function runElemeOcrNav(
   sleep: (ms: number) => Promise<void> = sleepMs,
 ): Promise<RawQuoteFacts> {
   let lastErr: unknown
+  const state: AddToCartState = { added: false, specTapped: false }
   for (let i = 0; i < attempts; i++) {
     try {
-      return await runElemeOcrOnce(driver, ocr, cond, sleep)
+      return await runElemeOcrOnce(driver, ocr, cond, sleep, state)
     } catch (err) {
       if (err instanceof NeedsHumanError || err instanceof ForbiddenActionError) throw err
       lastErr = err
+      // 若上一次重试已点过「选规格」但未确认加购成功，重走可能再点一次 → 宁可如实失败也不重复加购。
+      if (state.specTapped && !state.added && i + 1 < attempts) {
+        throw new Error(
+          '已点过「选规格」但未确认加购成功；为避免重复加购（非幂等），不再自动重试，请人工确认购物车后重跑',
+          { cause: err },
+        )
+      }
       await sleep(500)
     }
   }

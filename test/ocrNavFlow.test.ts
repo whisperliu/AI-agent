@@ -11,6 +11,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { runElemeOcrNav } from '../src/platform/elemeReal.ts'
+import { createOcrNav } from '../src/platform/ocrNav.ts'
 import { NeedsHumanError } from '../src/core/errors.ts'
 import type { Ocr, OcrWord } from '../src/ocr/reader.ts'
 import type { Driver } from '../src/device/driver.ts'
@@ -172,4 +173,71 @@ test('瞬时故障（非红线）→ 整条重试，下一次成功即返回', a
   const facts = await runElemeOcrNav(flaky, ocr, cond, 2, sleep)
   assert.equal(facts.payable, 30.98)
   assert.equal(launches, 2) // 整条重跑了一次
+})
+
+test('红线：整条重试时加购只发生一次（真机曾因重试把同菜加到 ×4）', async () => {
+  const HOME = [w('推荐', 100, 300)]
+  const SEARCH = [w('历史搜索', 100, 200)]
+  const RESULT = [w('销量', 60, 180)]
+  const STORE = [w('点餐', 60, 920), w('选规格', 1470, 950, 120, 50)]
+  const SPEC = [w('份量', 60, 877), w('选好了', 800, 2432, 200, 60)]
+  const CART = [w('去结算', 1453, 2432, 200, 60)]
+  const SETTLE = [w('合计', 1100, 2400, 120, 50), w('¥30.98', 1240, 2405, 120, 50)]
+  // 第一轮在「结算页」之后缺失 → 用一个永不匹配的帧让第一轮读不到实付而失败
+  const NO_SETTLE = [w('加载中', 100, 100)]
+  const frames = [
+    HOME,
+    SEARCH,
+    RESULT,
+    STORE,
+    STORE,
+    SPEC,
+    CART,
+    NO_SETTLE,
+    HOME,
+    SEARCH,
+    RESULT,
+    STORE,
+    CART,
+    SETTLE,
+  ]
+  const { ocr, driver, rec } = makeFake(frames)
+
+  const facts = await runElemeOcrNav(driver, ocr, cond, 2, sleep)
+  assert.equal(facts.payable, 30.98)
+  // 两轮里「选规格」只点了一次
+  assert.equal(rec.taps.filter((t) => t.x === 1490).length, 1)
+})
+
+test('waitFor：慢设备单帧吃掉全部预算时，仍至少看 2 帧（真机 OCR 6.2s/帧）', async () => {
+  let reads = 0
+  const ocr: Ocr = {
+    read: async () => {
+      reads++
+      // 模拟单帧耗时 400ms
+      await new Promise((r) => setTimeout(r, 400))
+      return { text: 'x', words: [w('x', 10, 10)] }
+    },
+  }
+  const driver = { screencap: async () => new Uint8Array([1]) } as unknown as Driver
+  const nav = createOcrNav(driver, ocr)
+  // 预算 200ms 远小于单帧 400ms：旧实现只读 1 帧就超时
+  await assert.rejects(() => nav.waitFor(() => false, '慢页面', 200), /OCR 等待超时/)
+  assert.ok(reads >= 2, `应至少看 2 帧，实际 ${reads}`)
+})
+
+test('waitFor(roi)：ROI 透传给 OCR（慢设备底部条只识别 1s vs 全屏 6s）', async () => {
+  const rois: unknown[] = []
+  const ocr: Ocr = {
+    read: async (_png: Uint8Array, roi?: unknown) => {
+      rois.push(roi)
+      return { text: '去结算', words: [w('去结算', 1453, 2432, 200, 60)] }
+    },
+  }
+  const driver = { screencap: async () => new Uint8Array([1]) } as unknown as Driver
+  const nav = createOcrNav(driver, ocr)
+  const roi = { x: 0, y: 2150, w: 1600, h: 410 }
+  const words = await nav.waitFor((ws) => ws.some((x) => x.t === '去结算'), '购物车栏', 5000, roi)
+  assert.equal(words.length, 1)
+  assert.deepEqual(rois[0], roi)
 })
