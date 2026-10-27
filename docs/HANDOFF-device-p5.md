@@ -158,11 +158,11 @@ adb devices   # 期望看到 adb-XXXX._adb-tls-connect._tcp  device
 ## 6. 当前仓库状态
 
 - **已结项（2026-10-25）**：真机端到端 PASS，见 `CHANGELOG[42]`。
-- 门禁：`pnpm check` **161/161 全绿**（本次为真机验证，无代码改动）；`src/price` 行覆盖 97.15%
+- 门禁：`pnpm check` **189/189 全绿**（2026-10-27 补 P6 离线全流程回放 +4）；`src/price` 行覆盖 97.15%
+- P6 代码/离线：`platform/ocrNav.ts` + `elemeReal.runElemeOcrNav` + `test/ocrNavFlow.test.ts`（见 §8 待复跑清单）
 - 安全红线：全程只读；未点任何提交/支付控件；未尝试破解验证码（拼图滑块由用户本人完成）；
   未自动修改窗口布局（只做检测并交人工）
 
----
 ## 7. 复测结果（2026-10-25）
 
 | 项 | 值 |
@@ -177,3 +177,43 @@ adb devices   # 期望看到 adb-XXXX._adb-tls-connect._tcp  device
 | 风险项 | 「美团红包 15元（待使用）」标 `presumed`，不计入/不抵实付 ✅ |
 | 证据 | 脱敏截图 `redaction=applied`（地址/联系人/手机号涂黑）+ dump 377 节点 |
 | 备注 | `adb shell input text` 中文会 NPE → 必须配 `unicodeIme=com.android.adbkeyboard/.AdbIME` |
+
+---
+## 8. P6（饿了么 canvas OCR 盲导航）待复跑清单（2026-10-27 记录）
+
+> 代码与**离线全流程回放**已完成（`test/ocrNavFlow.test.ts`，4 例）；仅差真机端到端。平板一上线按下面顺序跑即可。
+
+**0) 前置（设备必须与本机同网段）**
+```bash
+cd /home/liuqiaoqiao/dsh-plugin-price-agent
+ADB=$PWD/.home/android-sdk/platform-tools/adb
+$ADB start-server >/dev/null 2>&1; $ADB mdns check >/dev/null 2>&1
+for i in $(seq 1 15); do sleep 1; $ADB devices | grep -q "device$" && break; done
+$ADB devices -l        # 期望看到 adb-XXXX…  device（或 $ADB connect <ip:port>）
+```
+> 2026-10-27 本轮：`adb devices` 空、`mdns` 无服务、旧地址 `192.168.3.44:39079/38229/5555` 全不可达；
+> 本机 WSL 在 `192.168.71.0/24`，平板此前在 `192.168.3.x` —— **先确认同一 Wi-Fi**，再开「无线调试」给出新 `IP:端口`。
+
+**1) 能力探测**
+```bash
+# GUI 里让 AI 调 price_agent({action:'probe'})，或：
+DEVICE_ADDR=auto node .price-agent/diag/diag2.mjs   # 只打印 supportsOcrNav / 上下文
+```
+
+**2) P6 端到端（饿了么 canvas 盲导航，全程只读）**
+```bash
+DEVICE_ADDR=auto ITEM='小炒肉木桶饭' node .price-agent/diag/diag2.mjs
+# 期望：ELAPSED … payable <数字>；失败时异常**自带末帧 OCR 文本**（含 y 坐标），
+#       直接看文本判断卡在哪页，**不要**去 read_image 读整屏（省上下文，AGENTS.md §2）。
+```
+- 若抛 `NeedsHumanError(captcha|login)` → 红线：**立即停，交用户本人完成**，不识别/不绕过。
+- 若抛 `NeedsHumanError(environment)` 且 hint 含「拼单」→ 该菜已有进行中的拼单，**不要自动取消**，交用户处理。
+- 若 OCR 等待超时（异常里有末帧文本）→ 多半是 `ELEME_LAYOUT`（1600×2560 校准）与当前机型/分辨率不符，
+  按 `.price-agent/evidence/auto-*.png` 用 `node scripts/screen-inspect.mjs <png> --ocr [--roi …]` 重新校准坐标，
+  **不要**逐张读整屏图。
+
+**3) 收尾（DoD）**
+- 读到 `payable` 后：更新 `CHANGELOG`（新条目）、`docs/tasks.md` P6 DoD 勾选、`PLAN/README` 状态，
+  并 `pnpm check` 全绿后提交（Conventional Commits）。
+
+---
