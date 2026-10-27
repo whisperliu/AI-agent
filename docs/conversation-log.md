@@ -298,6 +298,47 @@
 
 ---
 
+---
+
+> 以下为 2026-10-27 会话（延续同 id）的轮次记录，接在附录 A **之前**的正文区。
+
+### 轮次 32 · 「继续」→ 收尾核查 + 补 P6 离线回归网（2026-10-27 13:55）✅
+- **意图**：用户「继续」。核查仓库现状与剩余项。
+- **结果**：`git` 干净、`pnpm check` 185/185 绿；发现唯一未完成项＝P6 饿了么**真机**端到端，且**平板离线**（`adb devices` 空、mDNS 无服务、旧地址 `.44:39079/38229/5555` 全不可达，本机在 `192.168.71.0/24`）。
+- **补的缺口（不依赖设备）**：P6 的「首页→…→读实付」整条走查**此前只有各原语单测、没有离线回放** → 新增 `test/ocrNavFlow.test.ts`（4 例：正常走查读数+6 次 tapPoint 顺序、**加购只点 1 次**、验证码→`NeedsHumanError` 读 1 帧即停、拼单页在加购前拦截、瞬时故障整条重试），并给 `runElemeOcrOnce/runElemeOcrNav` 加可选 `sleep` 注入缝（生产默认不变）。
+- **文档**：`CHANGELOG[48]`；tasks 加 **P6 DoD 行**；`30-platform` 补「离线全流程回放」；PLAN/README → P0–P6、189 tests。
+- **验证**：`pnpm check` **189/189**。提交 `32e6d25`、`9e7b178`。
+- **状态**：`ok(代码/离线就绪，真机待设备上线)`
+
+### 轮次 33 · 「设备已经脸上了」→ P6 真机端到端 **PASS**（2026-10-27 14:00–15:00）✅
+- **接机**：`adb mdns services` 发现 `adb-HA26JA4H-Qwlhvj 192.168.3.44:39177`；关键坑：**必须用默认 `HOME`（配对密钥在 `~/.android`）**，`HOME=$PWD/.home` 会因密钥不同连不上；且 adb server 随 shell 退出，需**单次调用内**完成 start-server→等设备→操作。
+- **排查（最耗时）**：饿了么全程**灰色骨架屏**（首页/地址/我的），一度误判"canvas 抓不到内容"；对照测试**美团同机完全正常（336 词）** → 真因是**饿了么需网络+定位就绪**才渲染（定位开了、`last location=31.198,121.627`、冷启动后正常）。
+- **OCR 可用性根因**：`chi_sim.traineddata` 缺失 → tesseract 去 jsdelivr 下载、弱网 `ECONNRESET`；补下载解压到 `.price-agent/ocr-cache/`（2.4MB）后正常。
+- **修 2 个真机缺陷**：① `ocrNav.waitFor` **慢设备零重试**（实测全屏 OCR **6.2s/帧** vs 6–8s 预算 → 只够 1 帧）→ 至少 2 帧 + 按首帧耗时动态预算 + 8 帧上限；② **整条重试重复加购**（真机同菜加到 **×4**，账单 13.98→125.92）→ 跨重试 `AddToCartState` + "已点选规格未确认则不再重试"。③ 加 `waitFor` **ROI**（底部条 ~1s/帧）+ `ELEME_ROI.bottomBar`。
+- **真机结果**：`payable=**¥13.98**`、`confidence=medium`、**`delta=0.00` 完美平账**（2+9+11.98=22.98 − 免配送费 9 = 13.98），与结算页「立即支付 ¥13.98」一致，耗时 87.6s。另一笔双菜 `44.96` 与页面「合计 ¥44.96」一致（交叉验证读数）。
+- **验证**：`pnpm check` **192/192**。提交 `29aa6b2`。
+- **状态**：`ok(P6 真机端到端 PASS)`
+
+### 轮次 34 · 「下一步」→ 双平台真机联跑 → 挖出 8 个真实缺陷（2026-10-27 15:00–19:00）✅
+- **意图**：用户选「双平台真机联跑（美团+饿了么同一快照对比）」。
+- **过程**：共跑 7 次联跑，每次都被真机脏数据/缺陷挡住，**逐个修**（详见 `CHANGELOG[50]`）：
+  1. 🔴 **静默错价①购物车跨任务累积**（1→2→3 件，多件费用×多件实付**算术自洽** → 报 ¥44.96/¥75.94）→ 解析结算页「共 N 件」为页面事实 + 饿了么加购前**要求购物车为空**（非空交人工，绝不自动清空用户商品）。
+  2. 🔴 **静默错价②饿了么伪造成交**：`storeName/itemName` 直接写 `cond.item`（实际加「小炒猪肝」却报查询词）→ 改为**从版面诚实抽取**（剥「区购/堂食店/蜂鸟准时达」角标 + OCR 前缀噪声）。
+  3. 🔴 **静默错价③两道菜各 x1**：只取单行 `x1` 与期望一致通过校验，但实付是两道菜总额（美团 dump 实证 ¥49.78=26.98+28.88+…）→ 件数改为**整页所有商品行 xN 之和**。
+  4. 🟠 **内外两层重试相乘**（runner `withRetry` × 内层 `runElemeOcrNav`）→ 每重试一次多买一件 → `PlatformStrategy.idempotentEnter=false`，runner 跳过外层重试。
+  5. 🟠 **默认规格菜品不弹规格窗** → 以「底部购物车条出现」判定加购成功。
+  6. 🟠 **动画店铺页 dump 永不 idle**（标准/压缩/`--windows` 全败、不产文件）→ 兜底**上滑让动图离屏**后重试（实测滚动后 193KB 新鲜 hierarchy）。
+  7. 🟡 `waitFor` 慢设备零重试 → 至少 2 帧 + 动态预算 + ROI；`isCartBar` 改结构信号（券后/免配送费/凑单），不再依赖 OCR 不稳的按钮白字。
+  8. 🟡 `QuoteGroup` 缺 `snapshotId`；canvas 页无 dump XML → 截图永不脱敏落盘 → 补 `snapshotId` + 新增 `sensitiveOcrRects`（按 OCR bbox 脱敏，仍坚持"无法确认脱敏则不落原图"）。
+- **真机数据（干净单量）**：饿了么 **¥13.98**（`delta=0`）、美团 **¥49.78**（`delta=0`、`confidence=high`、`needsConfirm=false`）；脏数据场景下系统**判不可比 + `needsConfirm` + `cheapest` 只取可信者**，**宁可不给结论也不给错价**。
+- **验证**：`pnpm check` **204/204**（+12 回归）。提交 `3ac9196`、`2672cf1`；已 push，`main`=`origin/main`。
+- **红线**：全程只读；未点提交/支付；调试仅**清空自动化自己加进购物车的测试菜品**（用户商品一件未动，逐屏核对）；美团字序验证码**立即停、未识别未绕过**（交用户）。
+- **状态**：`ok(双平台联跑可用；脏数据被识别拒绝)`
+
+---
+
+---
+
 ## 附录 A · 机器可读元数据（JSON）
 
 ```json
@@ -310,70 +351,465 @@
     "cwd": "/home/liuqiaoqiao/dsh-plugin-price-agent",
     "tz": "Asia/Shanghai",
     "start": "2026-10-22T08:14:19+08:00",
-    "end": "2026-10-26T21:30:00+08:00",
+    "end": "2026-10-27T19:10:00+08:00",
     "baseline_commit": "43d6ea0",
-    "final_commit": "pending（本轮工作区改动 3 次提交：P6 实现 / 工具与文档 / 收尾）"
+    "final_commit": "2672cf1（P6 真机 PASS + 双平台联跑 8 项修复；本轮共 5 次提交）"
   },
   "turns": [
-    {"n":1,"at":"~08:14","user":"下一步构建","intent":"build P1","result":"P1 全链路实现 + 测试/文档","verify":"pnpm check 54/54","status":"ok"},
-    {"n":2,"at":"12:36","user":"你跑过吗","intent":"reproduce/demo","result":"现场重跑+全链路演示","verify":"54/54 + demo output","status":"ok"},
-    {"n":3,"at":"~12:40","user":"跑","intent":"real headless run","result":"隔离 DSH headless 真调 price_agent","verify":"模型回话+storage+checksum","status":"ok"},
-    {"n":4,"at":"12:46","user":"把插件塞进当前 web GUI…我手动重启","intent":"install into :3080","result":"2 脚本 + 差分验证 + 备用 GUI:3096","verify":"bad-path ERR_MODULE_NOT_FOUND vs real ok","status":"ok"},
-    {"n":5,"at":"~12:53","user":"3096打不开，我重启了当前web","intent":"diagnose not loaded","result":"确认未加载及原因","verify":"storage/tool/patch 核对","status":"ok"},
-    {"n":6,"at":"~12:54","user":"(答)直接 dsh web","intent":"why not loaded","result":"解释+方式A/B","verify":"-","status":"ok"},
-    {"n":7,"at":"~12:54","user":"方式A装好重启了","intent":"verify loaded + fix bugs","result":"owner 修复 + 幂等回滚 + force","verify":"pnpm check 56/56 + jobs-owner 测试","status":"ok"},
-    {"n":8,"at":"13:01","user":"用 price_agent 比价 香叶 烤鸭饭","intent":"real run in GUI","result":"meituan 26.9 < eleme 27.0","verify":"storage completed + checksum ok","status":"ok"},
-    {"n":9,"at":"13:03","user":"git commit","intent":"commit","result":"970d2fb (56 files)","verify":"pre-commit 56/56; tree clean","status":"ok"},
-    {"n":10,"at":"13:05","user":"记录每一轮对话","intent":"metadata tracking doc","result":"本文件","verify":"-","status":"ok"},
-    {"n":11,"at":"13:08","user":"当前会话结束时追加这份文件","intent":"append-at-session-end","result":"策略更正为收尾时追加","verify":"-","status":"ok"},
-    {"n":12,"at":"13:11","user":"收尾，P1收工。","intent":"final-snapshot","result":"最终快照并提交","verify":"gate green","status":"ok"},
-    {"n":13,"at":"13:12","user":"下一步P2真机","intent":"build P2 real-device channel","result":"adb 驱动/连接重连/能力探测/弹窗恢复/截图留证/probe+selfCheck/演练脚本 + 修 assertTapSafe 漏检 text","verify":"pnpm check 82/82; coverage 95.51%; 无设备可读报错","status":"ok(真机PASS待用户连机)"},
-    {"n":14,"at":"15:08","user":"收尾","intent":"final-snapshot","result":"时间跨度/结束状态/期间提交更正 + 追加本轮 + JSON/页脚","verify":"pnpm check 82/82","status":"ok"},
-    {"n":15,"at":"10-24 13:35","user":"测试真机 → 走无线 → 补文档(已重启)","intent":"real-device test","result":"USB 不通(仅充电线/无 root 装 usbip) → 无线调试 pair+connect；密钥同步到 HOME；配置 mock→adb；重启后 probe 回真机 TB321FU","verify":"真机 dump/截屏/probe 全通过；GUI probe 返回 TB321FU","status":"ok(真机 §8.4 PASS)"},
-    {"n":16,"at":"10-24 14:55","user":"继续执行","intent":"P3 真机校准(结算页读实付)","result":"真机结算页无 resource-id → 重写 extractMeituanSettle 为坐标/行抽取；待使用红包转 optionalSaving；结算页文案锚点+短路零点击；红线补 极速支付","verify":"真机 payable=30.98 balanced=true confidence=high needsConfirm=false；pnpm check 101/101；coverage 95.89%","status":"ok(P3 结算页读数 PASS)"},
-    {"n":17,"at":"10-24 15:00","user":"(goal round 继续)","intent":"冷启动全流程 搜索→选店→加购→结算","result":"首页首屏弹出字序验证码(无字WebView) → 按红线 §0-2 立即停止，未识别/未点击；补 runMeituanReal 真实代码路径 NeedsHumanError+零点击回归","verify":"classifyObstruction=captcha；pnpm check 102/102","status":"blocked(需人工过验证码)"},
-    {"n":18,"at":"10-24 15:37","user":"(goal round 继续，验证码已清除)","intent":"P3 真机冷启动全流程自动化跑通","result":"enterSettlePage(driver) 从首页全自动 搜索→选店→选规格/加购→去结算→读实付 = payable 19.9 balanced；修 id 后缀匹配/首页入口/banner dump/共减误判/神抢手变体/新增安全 tapPoint","verify":"真机 payable=19.9 balanced=true needsConfirm=false；pnpm check 104/104；19 P3 tests + 8 脱敏 fixture","status":"ok(P3 全流程 PASS)"},
-    {"n":19,"at":"10-24 15:44","user":"有一个问题，现在对话跑传递图片太多了…改进一下 / 收尾","intent":"降低上下文占用 + 收尾","result":"新增 scripts/evidence-inspect.mjs(dump→紧凑文本+坐标，替代读图)；AGENTS §2 加省上下文强制规则；README 补说明；清理 35MB 调试截图→1.6MB；本文件最终快照","verify":"pnpm check 104/104；脚本对脱敏 fixture 输出正确","status":"ok"},
-    {"n":20,"at":"10-24 16:10","user":"下一步进行P4","intent":"P4 多平台+策略+等价分组","result":"config 增 platforms.strategies;新增 price/strategies.ts(四态+谨慎互斥);Quote 带 snapshotId/hash 且 compare 强制同快照(偏离归不可比组);新增 platform/elemeReal+selectors/eleme;抽 settleRows/navigator 共享原语;runner 集成策略 savings 与互斥","verify":"pnpm check 122/122 全绿; src/price 行覆盖 97.15%(strategies 100%); 16 P4 tests + eleme 脱敏 fixture; 饿了么真机遇实名/短信验证→红线即停零点击","status":"ok(P4 完成)"},
-    {"n":21,"at":"10-24 16:46","user":"手机上饿了么已经登录，重新测试","intent":"饿了么真机复测","result":"无线调试端口变更→用 ~/.android 旧key重连成功;实测饿了么整App为canvas/TMS自绘(dump仅水印节点,结算页无文本);落地真实 OCR(tesseract)+elemeReal.extractElemeSettleFromOcr+settlePanelRoi(右栏tms_fragment_container裁剪);真机读到 payable=20.8","verify":"真机 eleme.enterSettlePage(driver,cond,{ocr}) → payable=20.8, confidence=low, balanced=false delta=-1, needsConfirm=true(OCR丢打包费¥1数字→如实降级);pnpm check 126/126;src/price覆盖97.15%","status":"ok(饿了么结算页 OCR 读数 PASS)"},
-    {"n":22,"at":"10-24 18:05","user":"收尾","intent":"会话最终快照","result":"工作区干净、无未提交改动；门禁 pnpm check 全绿 126/126；src/price 行覆盖 97.15%；提交 ad130e5(P4)+7dfc92d(饿了么OCR) 已落库；追加本轮记录与最终快照","verify":"pnpm check EXIT=0; coverage all files 97.15%","status":"ok"}
-    {"n":23,"at":"10-24 18:15","user":"进行下一步","intent":"P5 打磨(一) 隐私/清理/重试/证据绑定","result":"新增 device/redact.ts(零依赖PNG脱敏)、task/cleanup.ts(TTL+保留上限)、core/retry.ts(瞬时重试,红线不重试);runner.bindEvidence 真实绑定 dump+脱敏图/ocrText;平台补截图;启动+完成清理;getResult 证据降级提示;config/patch 增 retryAttempts/retainDays/redact","verify":"真机 mt-s6 脱敏 masked=2 对照确认涂黑;pnpm check 149/149;src/price 覆盖 97.15%;新增 redact/retry/p5 共 22 tests","status":"ok(P5 一阶段完成)"},
-    {"n":24,"at":"10-24 18:45","user":"继续","intent":"P5 打磨(二) 失败取证脱敏/OCR框/证据缺失兜底","result":"capture.ts 默认脱敏(不可脱敏不落图,返回redaction/warning);steps.evidenceRedact(仅测试关);RawQuoteFacts.ocrWords→evidence.rawExtraction.ocrBoxes;bindEvidence 无证据兜底 missingReason","verify":"pnpm check 152/152;test/p5 +3 例;device-p2 断言超时改 evidenceRedact:false;真机本轮掉线未复跑(算法上轮 mt-s6 已验证)","status":"ok(P5 二阶段完成)"},
-    {"n":25,"at":"10-24 18:55","user":"继续(打磨)","intent":"P5 打磨(三) 无线调试 mDNS 自动发现/回连","result":"adb.ts 重连候选:配置host:port→mDNS串号→adb mdns services 当前端口;真机旧:44881 自动切到 mDNS 串号;captureEvidence 落 dump+脱敏图","verify":"真机 probe TB321FU/16/canScreenshot+脱敏PNG;device-p2 +2(28 tests);pnpm check 全绿","status":"ok(P5 三阶段完成)"},
-    {"n":26,"at":"10-24 21:30","user":"应对没有跑通的问题怎么处理？/ 先中断，收尾，记录检测到哪里了，明天继续","intent":"追查真机端到端跑不通的根因 + 交接","result":"定位并修复 6 个真机 bug(启动App/回首页/dump陈旧/重试/首页锚点/坐标)+新增窗口几何与坐标映射与分屏守卫;卡点为平板 PC/桌面模式浮窗 appX 漂移(环境问题,守卫正确拦截);写 docs/HANDOFF-device-p5.md 交接","verify":"pnpm check 161/161;device-p2 35 用例;真机仍未跑通(如实记录)","status":"paused(待用户切回全屏竖屏后复测)"},
-    {"n":27,"at":"10-25 10:40","user":"继续昨天的操作 / 提交，更新端口","intent":"真机端到端复测 + 结项","result":"mDNS 自动发现平板实际地址 192.168.3.44:39079 并连上;环境自检为全屏竖屏(inPcmode=0);冷启动遇拼图滑块即停由用户过;补 unicodeIme 后 runCompare 真机全流程一步跑通;CHANGELOG[42]+tasks 进度✅+HANDOFF 结项+profile serial 更新","verify":"真机 payable=29.88 balanced=true confidence=high needsConfirm=false;账目 34.78-3.9-1=29.88;15元红包标 presumed 不抵扣;脱敏证据 applied;pnpm check 161/161","status":"ok(真机端到端 PASS)"},
-    {"n":28,"at":"10-26 14:12","user":"四选全选(收尾提交/serial改auto/push/复跑真机)","intent":"收尾提交 + 修正运行时 serial + push + 再复跑真机","result":"docs 提交 2b42431;profile serial 旧:44881→auto(mDNS自动发现),并更正 CHANGELOG[42] 不准确表述;push 43d6ea0..2b42431 同步 origin;平板重开后 mDNS 发现端口变为 :38229,普通 am start 拉美团前台(设置分屏任务不影响聚焦窗 fullscreen)后真机全流程再跑通","verify":"真机 payable=29.88 balanced=true confidence=high needsConfirm=false;账目 34.78-3.9-1=29.88;15元红包 presumed 不抵扣;证据 redaction=applied;pnpm check 161/161","status":"ok(再复跑 PASS)"},
-    {"n":29,"at":"10-26 14:37","user":"现在可以正常比价吗","intent":"GUI 工具实跑真机验证 + 修复 getResult 输出 bug","result":"probe/start 正常、任务 completed,但 getResult 报 not lossless JSON(reply 带 note/error undefined,DSH 严格拒 undefined);新增 toLosslessJson 清洗 getResult/listTasks/execute;+4 回归用例(isJsonValue 断言)","verify":"pnpm check 165/165;真实结果文件 formatCompareResult 渲染 meituan ¥29.88 high 需复核=否;真机读数 29.88 balanced=true;需重启 DSH web 生效","status":"ok(修复工具层序列化 bug)"},
-    {"n":30,"at":"10-26 20:05","user":"现在跑类型检查，并确认设备当前状态。同时当前测试出现上下文超出问题，优化","intent":"typecheck + 设备状态 + 治理上下文超出","result":"typecheck EXIT=0;设备在线 TB321FU/Android16/1600x2560/前台EleTMSActivity;定根因为上一次饿了么调试会话逐张 read_image 整屏图(28 张、单张1.6-3.3MB);新增 scripts/screen-inspect.mjs(OCR→文本/裁剪降采样出小图+估算token)、ocrNav.waitFor 异常自带末帧文本、AGENTS§2/README/30-platform 规则化","verify":"pnpm check 183/183;真机实时截图 3.4MB→裁底部条+scale0.5→58KB/≈149token 且文字清晰;整屏未入上下文","status":"ok(上下文超出已治理)"},
-    {"n":31,"at":"10-26 21:05","user":"继续下一步","intent":"P6 饿了么 canvas OCR 盲导航真机端到端","result":"设备起跑在线、OCR冒烟正常;runElemeReal 真机端到端卡死→确认平板无线调试掉线(.44丢包/mDNS无服务);顺带定位并修复「掉线时 adb 命令无限挂起」真 bug:stepTimeoutMs 传了却没在 adb.ts 使用、runNativeCommand 无默认超时 → 新增 withDeadline(AbortSignal.timeout/any,不自造timer,守§2.2)","verify":"pnpm check 185/185(+2 掉线超时回归);真机端到端阻塞于设备离线","status":"partial(P6 真机待设备上线复跑;挂起 bug 已修)"},
+    {
+      "n": 1,
+      "at": "~08:14",
+      "user": "下一步构建",
+      "intent": "build P1",
+      "result": "P1 全链路实现 + 测试/文档",
+      "verify": "pnpm check 54/54",
+      "status": "ok"
+    },
+    {
+      "n": 2,
+      "at": "12:36",
+      "user": "你跑过吗",
+      "intent": "reproduce/demo",
+      "result": "现场重跑+全链路演示",
+      "verify": "54/54 + demo output",
+      "status": "ok"
+    },
+    {
+      "n": 3,
+      "at": "~12:40",
+      "user": "跑",
+      "intent": "real headless run",
+      "result": "隔离 DSH headless 真调 price_agent",
+      "verify": "模型回话+storage+checksum",
+      "status": "ok"
+    },
+    {
+      "n": 4,
+      "at": "12:46",
+      "user": "把插件塞进当前 web GUI…我手动重启",
+      "intent": "install into :3080",
+      "result": "2 脚本 + 差分验证 + 备用 GUI:3096",
+      "verify": "bad-path ERR_MODULE_NOT_FOUND vs real ok",
+      "status": "ok"
+    },
+    {
+      "n": 5,
+      "at": "~12:53",
+      "user": "3096打不开，我重启了当前web",
+      "intent": "diagnose not loaded",
+      "result": "确认未加载及原因",
+      "verify": "storage/tool/patch 核对",
+      "status": "ok"
+    },
+    {
+      "n": 6,
+      "at": "~12:54",
+      "user": "(答)直接 dsh web",
+      "intent": "why not loaded",
+      "result": "解释+方式A/B",
+      "verify": "-",
+      "status": "ok"
+    },
+    {
+      "n": 7,
+      "at": "~12:54",
+      "user": "方式A装好重启了",
+      "intent": "verify loaded + fix bugs",
+      "result": "owner 修复 + 幂等回滚 + force",
+      "verify": "pnpm check 56/56 + jobs-owner 测试",
+      "status": "ok"
+    },
+    {
+      "n": 8,
+      "at": "13:01",
+      "user": "用 price_agent 比价 香叶 烤鸭饭",
+      "intent": "real run in GUI",
+      "result": "meituan 26.9 < eleme 27.0",
+      "verify": "storage completed + checksum ok",
+      "status": "ok"
+    },
+    {
+      "n": 9,
+      "at": "13:03",
+      "user": "git commit",
+      "intent": "commit",
+      "result": "970d2fb (56 files)",
+      "verify": "pre-commit 56/56; tree clean",
+      "status": "ok"
+    },
+    {
+      "n": 10,
+      "at": "13:05",
+      "user": "记录每一轮对话",
+      "intent": "metadata tracking doc",
+      "result": "本文件",
+      "verify": "-",
+      "status": "ok"
+    },
+    {
+      "n": 11,
+      "at": "13:08",
+      "user": "当前会话结束时追加这份文件",
+      "intent": "append-at-session-end",
+      "result": "策略更正为收尾时追加",
+      "verify": "-",
+      "status": "ok"
+    },
+    {
+      "n": 12,
+      "at": "13:11",
+      "user": "收尾，P1收工。",
+      "intent": "final-snapshot",
+      "result": "最终快照并提交",
+      "verify": "gate green",
+      "status": "ok"
+    },
+    {
+      "n": 13,
+      "at": "13:12",
+      "user": "下一步P2真机",
+      "intent": "build P2 real-device channel",
+      "result": "adb 驱动/连接重连/能力探测/弹窗恢复/截图留证/probe+selfCheck/演练脚本 + 修 assertTapSafe 漏检 text",
+      "verify": "pnpm check 82/82; coverage 95.51%; 无设备可读报错",
+      "status": "ok(真机PASS待用户连机)"
+    },
+    {
+      "n": 14,
+      "at": "15:08",
+      "user": "收尾",
+      "intent": "final-snapshot",
+      "result": "时间跨度/结束状态/期间提交更正 + 追加本轮 + JSON/页脚",
+      "verify": "pnpm check 82/82",
+      "status": "ok"
+    },
+    {
+      "n": 15,
+      "at": "10-24 13:35",
+      "user": "测试真机 → 走无线 → 补文档(已重启)",
+      "intent": "real-device test",
+      "result": "USB 不通(仅充电线/无 root 装 usbip) → 无线调试 pair+connect；密钥同步到 HOME；配置 mock→adb；重启后 probe 回真机 TB321FU",
+      "verify": "真机 dump/截屏/probe 全通过；GUI probe 返回 TB321FU",
+      "status": "ok(真机 §8.4 PASS)"
+    },
+    {
+      "n": 16,
+      "at": "10-24 14:55",
+      "user": "继续执行",
+      "intent": "P3 真机校准(结算页读实付)",
+      "result": "真机结算页无 resource-id → 重写 extractMeituanSettle 为坐标/行抽取；待使用红包转 optionalSaving；结算页文案锚点+短路零点击；红线补 极速支付",
+      "verify": "真机 payable=30.98 balanced=true confidence=high needsConfirm=false；pnpm check 101/101；coverage 95.89%",
+      "status": "ok(P3 结算页读数 PASS)"
+    },
+    {
+      "n": 17,
+      "at": "10-24 15:00",
+      "user": "(goal round 继续)",
+      "intent": "冷启动全流程 搜索→选店→加购→结算",
+      "result": "首页首屏弹出字序验证码(无字WebView) → 按红线 §0-2 立即停止，未识别/未点击；补 runMeituanReal 真实代码路径 NeedsHumanError+零点击回归",
+      "verify": "classifyObstruction=captcha；pnpm check 102/102",
+      "status": "blocked(需人工过验证码)"
+    },
+    {
+      "n": 18,
+      "at": "10-24 15:37",
+      "user": "(goal round 继续，验证码已清除)",
+      "intent": "P3 真机冷启动全流程自动化跑通",
+      "result": "enterSettlePage(driver) 从首页全自动 搜索→选店→选规格/加购→去结算→读实付 = payable 19.9 balanced；修 id 后缀匹配/首页入口/banner dump/共减误判/神抢手变体/新增安全 tapPoint",
+      "verify": "真机 payable=19.9 balanced=true needsConfirm=false；pnpm check 104/104；19 P3 tests + 8 脱敏 fixture",
+      "status": "ok(P3 全流程 PASS)"
+    },
+    {
+      "n": 19,
+      "at": "10-24 15:44",
+      "user": "有一个问题，现在对话跑传递图片太多了…改进一下 / 收尾",
+      "intent": "降低上下文占用 + 收尾",
+      "result": "新增 scripts/evidence-inspect.mjs(dump→紧凑文本+坐标，替代读图)；AGENTS §2 加省上下文强制规则；README 补说明；清理 35MB 调试截图→1.6MB；本文件最终快照",
+      "verify": "pnpm check 104/104；脚本对脱敏 fixture 输出正确",
+      "status": "ok"
+    },
+    {
+      "n": 20,
+      "at": "10-24 16:10",
+      "user": "下一步进行P4",
+      "intent": "P4 多平台+策略+等价分组",
+      "result": "config 增 platforms.strategies;新增 price/strategies.ts(四态+谨慎互斥);Quote 带 snapshotId/hash 且 compare 强制同快照(偏离归不可比组);新增 platform/elemeReal+selectors/eleme;抽 settleRows/navigator 共享原语;runner 集成策略 savings 与互斥",
+      "verify": "pnpm check 122/122 全绿; src/price 行覆盖 97.15%(strategies 100%); 16 P4 tests + eleme 脱敏 fixture; 饿了么真机遇实名/短信验证→红线即停零点击",
+      "status": "ok(P4 完成)"
+    },
+    {
+      "n": 21,
+      "at": "10-24 16:46",
+      "user": "手机上饿了么已经登录，重新测试",
+      "intent": "饿了么真机复测",
+      "result": "无线调试端口变更→用 ~/.android 旧key重连成功;实测饿了么整App为canvas/TMS自绘(dump仅水印节点,结算页无文本);落地真实 OCR(tesseract)+elemeReal.extractElemeSettleFromOcr+settlePanelRoi(右栏tms_fragment_container裁剪);真机读到 payable=20.8",
+      "verify": "真机 eleme.enterSettlePage(driver,cond,{ocr}) → payable=20.8, confidence=low, balanced=false delta=-1, needsConfirm=true(OCR丢打包费¥1数字→如实降级);pnpm check 126/126;src/price覆盖97.15%",
+      "status": "ok(饿了么结算页 OCR 读数 PASS)"
+    },
+    {
+      "n": 22,
+      "at": "10-24 18:05",
+      "user": "收尾",
+      "intent": "会话最终快照",
+      "result": "工作区干净、无未提交改动；门禁 pnpm check 全绿 126/126；src/price 行覆盖 97.15%；提交 ad130e5(P4)+7dfc92d(饿了么OCR) 已落库；追加本轮记录与最终快照",
+      "verify": "pnpm check EXIT=0; coverage all files 97.15%",
+      "status": "ok"
+    },
+    {
+      "n": 23,
+      "at": "10-24 18:15",
+      "user": "进行下一步",
+      "intent": "P5 打磨(一) 隐私/清理/重试/证据绑定",
+      "result": "新增 device/redact.ts(零依赖PNG脱敏)、task/cleanup.ts(TTL+保留上限)、core/retry.ts(瞬时重试,红线不重试);runner.bindEvidence 真实绑定 dump+脱敏图/ocrText;平台补截图;启动+完成清理;getResult 证据降级提示;config/patch 增 retryAttempts/retainDays/redact",
+      "verify": "真机 mt-s6 脱敏 masked=2 对照确认涂黑;pnpm check 149/149;src/price 覆盖 97.15%;新增 redact/retry/p5 共 22 tests",
+      "status": "ok(P5 一阶段完成)"
+    },
+    {
+      "n": 24,
+      "at": "10-24 18:45",
+      "user": "继续",
+      "intent": "P5 打磨(二) 失败取证脱敏/OCR框/证据缺失兜底",
+      "result": "capture.ts 默认脱敏(不可脱敏不落图,返回redaction/warning);steps.evidenceRedact(仅测试关);RawQuoteFacts.ocrWords→evidence.rawExtraction.ocrBoxes;bindEvidence 无证据兜底 missingReason",
+      "verify": "pnpm check 152/152;test/p5 +3 例;device-p2 断言超时改 evidenceRedact:false;真机本轮掉线未复跑(算法上轮 mt-s6 已验证)",
+      "status": "ok(P5 二阶段完成)"
+    },
+    {
+      "n": 25,
+      "at": "10-24 18:55",
+      "user": "继续(打磨)",
+      "intent": "P5 打磨(三) 无线调试 mDNS 自动发现/回连",
+      "result": "adb.ts 重连候选:配置host:port→mDNS串号→adb mdns services 当前端口;真机旧:44881 自动切到 mDNS 串号;captureEvidence 落 dump+脱敏图",
+      "verify": "真机 probe TB321FU/16/canScreenshot+脱敏PNG;device-p2 +2(28 tests);pnpm check 全绿",
+      "status": "ok(P5 三阶段完成)"
+    },
+    {
+      "n": 26,
+      "at": "10-24 21:30",
+      "user": "应对没有跑通的问题怎么处理？/ 先中断，收尾，记录检测到哪里了，明天继续",
+      "intent": "追查真机端到端跑不通的根因 + 交接",
+      "result": "定位并修复 6 个真机 bug(启动App/回首页/dump陈旧/重试/首页锚点/坐标)+新增窗口几何与坐标映射与分屏守卫;卡点为平板 PC/桌面模式浮窗 appX 漂移(环境问题,守卫正确拦截);写 docs/HANDOFF-device-p5.md 交接",
+      "verify": "pnpm check 161/161;device-p2 35 用例;真机仍未跑通(如实记录)",
+      "status": "paused(待用户切回全屏竖屏后复测)"
+    },
+    {
+      "n": 27,
+      "at": "10-25 10:40",
+      "user": "继续昨天的操作 / 提交，更新端口",
+      "intent": "真机端到端复测 + 结项",
+      "result": "mDNS 自动发现平板实际地址 192.168.3.44:39079 并连上;环境自检为全屏竖屏(inPcmode=0);冷启动遇拼图滑块即停由用户过;补 unicodeIme 后 runCompare 真机全流程一步跑通;CHANGELOG[42]+tasks 进度✅+HANDOFF 结项+profile serial 更新",
+      "verify": "真机 payable=29.88 balanced=true confidence=high needsConfirm=false;账目 34.78-3.9-1=29.88;15元红包标 presumed 不抵扣;脱敏证据 applied;pnpm check 161/161",
+      "status": "ok(真机端到端 PASS)"
+    },
+    {
+      "n": 28,
+      "at": "10-26 14:12",
+      "user": "四选全选(收尾提交/serial改auto/push/复跑真机)",
+      "intent": "收尾提交 + 修正运行时 serial + push + 再复跑真机",
+      "result": "docs 提交 2b42431;profile serial 旧:44881→auto(mDNS自动发现),并更正 CHANGELOG[42] 不准确表述;push 43d6ea0..2b42431 同步 origin;平板重开后 mDNS 发现端口变为 :38229,普通 am start 拉美团前台(设置分屏任务不影响聚焦窗 fullscreen)后真机全流程再跑通",
+      "verify": "真机 payable=29.88 balanced=true confidence=high needsConfirm=false;账目 34.78-3.9-1=29.88;15元红包 presumed 不抵扣;证据 redaction=applied;pnpm check 161/161",
+      "status": "ok(再复跑 PASS)"
+    },
+    {
+      "n": 29,
+      "at": "10-26 14:37",
+      "user": "现在可以正常比价吗",
+      "intent": "GUI 工具实跑真机验证 + 修复 getResult 输出 bug",
+      "result": "probe/start 正常、任务 completed,但 getResult 报 not lossless JSON(reply 带 note/error undefined,DSH 严格拒 undefined);新增 toLosslessJson 清洗 getResult/listTasks/execute;+4 回归用例(isJsonValue 断言)",
+      "verify": "pnpm check 165/165;真实结果文件 formatCompareResult 渲染 meituan ¥29.88 high 需复核=否;真机读数 29.88 balanced=true;需重启 DSH web 生效",
+      "status": "ok(修复工具层序列化 bug)"
+    },
+    {
+      "n": 30,
+      "at": "10-26 20:05",
+      "user": "现在跑类型检查，并确认设备当前状态。同时当前测试出现上下文超出问题，优化",
+      "intent": "typecheck + 设备状态 + 治理上下文超出",
+      "result": "typecheck EXIT=0;设备在线 TB321FU/Android16/1600x2560/前台EleTMSActivity;定根因为上一次饿了么调试会话逐张 read_image 整屏图(28 张、单张1.6-3.3MB);新增 scripts/screen-inspect.mjs(OCR→文本/裁剪降采样出小图+估算token)、ocrNav.waitFor 异常自带末帧文本、AGENTS§2/README/30-platform 规则化",
+      "verify": "pnpm check 183/183;真机实时截图 3.4MB→裁底部条+scale0.5→58KB/≈149token 且文字清晰;整屏未入上下文",
+      "status": "ok(上下文超出已治理)"
+    },
+    {
+      "n": 31,
+      "at": "10-26 21:05",
+      "user": "继续下一步",
+      "intent": "P6 饿了么 canvas OCR 盲导航真机端到端",
+      "result": "设备起跑在线、OCR冒烟正常;runElemeReal 真机端到端卡死→确认平板无线调试掉线(.44丢包/mDNS无服务);顺带定位并修复「掉线时 adb 命令无限挂起」真 bug:stepTimeoutMs 传了却没在 adb.ts 使用、runNativeCommand 无默认超时 → 新增 withDeadline(AbortSignal.timeout/any,不自造timer,守§2.2)",
+      "verify": "pnpm check 185/185(+2 掉线超时回归);真机端到端阻塞于设备离线",
+      "status": "partial(P6 真机待设备上线复跑;挂起 bug 已修)"
+    },
+    {
+      "n": 32,
+      "at": "10-27 13:55",
+      "user": "继续",
+      "intent": "收尾核查 + 补 P6 离线回归网",
+      "result": "仓库干净/185绿;发现唯一未完成=P6真机且平板离线;补 test/ocrNavFlow.test.ts(4例:全流程回放/加购只点1次/验证码即停/瞬时重试)+sleep注入缝",
+      "verify": "pnpm check 189/189;文档 CHANGELOG[48]/tasks P6 DoD/30-platform/PLAN/README",
+      "status": "ok(代码离线就绪,真机待上线)"
+    },
+    {
+      "n": 33,
+      "at": "10-27 14:00",
+      "user": "设备已经脸上了",
+      "intent": "P6 饿了么真机端到端",
+      "result": "mDNS 找到 .44:39177(须默认 HOME 的密钥+单次调用内 start-server);饿了么全程骨架屏一度误判canvas→真因需网络+定位就绪;补 chi_sim.traineddata 解决OCR联网失败;修 waitFor 慢设备零重试(全屏OCR 6.2s/帧)与整条重试重复加购(同菜x4);加 waitFor ROI",
+      "verify": "真机 payable=¥13.98 confidence=medium delta=0 平账(2+9+11.98-9),与「立即支付¥13.98」一致 87.6s;pnpm check 192/192",
+      "status": "ok(P6 真机端到端 PASS)"
+    },
+    {
+      "n": 34,
+      "at": "10-27 15:00",
+      "user": "下一步",
+      "intent": "双平台真机联跑(美团+饿了么同快照)",
+      "result": "7次联跑逐个挖出并修 8 个真缺陷:①购物车跨任务累积(静默错价,多件费用x多件实付亦自洽)②饿了么伪造storeName/itemName=cond.item(静默错价)③两道菜各x1只取单行(静默错价)④内外两层重试相乘重复加购⑤默认规格不弹窗⑥动画页dump永不idle⑦waitFor零重试/isCartBar结构信号⑧QuoteGroup缺snapshotId+canvas截图不脱敏落盘",
+      "verify": "真机 美团¥49.78(delta=0,high)/饿了么¥13.98(delta=0);脏数据判不可比+needsConfirm+cheapest只取可信;pnpm check 204/204(+12)",
+      "status": "ok(双平台联跑可用;宁可不给结论也不给错价)"
+    }
   ],
   "fixes": [
-    {"topic":"job owner","file":"src/core/jobs-adapter.ts","detail":"owner=exec.agent.id 贯通"},
-    {"topic":"idempotency stuck","file":"src/task/lifecycle.ts","detail":"jobs.start 失败回滚+force 重跑"},
-    {"topic":"readonly sandbox","file":"scripts/*","detail":"--patch 叠加 / install 脚本"},
-    {"topic":"safety text gap","file":"src/core/safety.ts","detail":"assertTapSafe 补检 text（P2 发现）"},
-    {"topic":"adb binary screencap","file":"src/device/adb.ts","detail":"screencap 走 pull 文件而非 utf8"},
-    {"topic":"adb key home","file":"/home/liuqiaoqiao/.android","detail":"配对密钥同步到 dsh 进程 HOME，避免 unauthorized"},
-    {"topic":"真机结算页无 id","file":"src/platform/meituanReal.ts","detail":"坐标/行抽取（buildRows+amountNearLabel）替代缺失 resource-id"},
-    {"topic":"待使用红包误当已减","file":"src/platform/meituanReal.ts","detail":"转 optionalSaving(presumed)，不进 discounts/不抵扣 → 实付不再被算低 15 元"},
-    {"topic":"付款按钮漏拦(极速支付)","file":"src/core/safety.ts","detail":"FORBIDDEN_TEXTS 补 极速支付/立即付款等（真机发现）"},
-    {"topic":"schemastery 无 optional/nullable","file":"src/config.ts","detail":"可选字段用裸 schema；可空用 z.union([z.number(),z.const(null)]).default(null)"},
-    {"topic":"策略假断言可用","file":"src/price/strategies.ts","detail":"配置/记账最多 presumed；星期/门槛/日限只降级 known_unavailable；effectivePrice 仍只扣 verified&&!alreadyIncluded"},
-    {"topic":"跨平台误互斥","file":"src/price/strategies.ts","detail":"applyCrossPlatformExclusivity 默认不互斥，仅 crossPlatformExclusive=true 且他平台 verified 才降级"},
-    {"topic":"坐标行抽取重复实现","file":"src/platform/settleRows.ts","detail":"美团/饿了么共享聚行+标签→金额+结果卡/可点原语，避免复制；amountNearLabel 改中心点比较"},
-    {"topic":"掉线无限挂起","file":"src/device/adb.ts","detail":"stepTimeoutMs 传了却未使用+runNativeCommand 无默认超时→设备掉线单条 adb 永远挂起；新增 withDeadline(AbortSignal.timeout/any，不自造 timer，守 §2.2)，所有 adb/run 通道包裹，超时抛 timeout 供 isRetryable 重试（+2 回归）"},
-    {"topic":"canvas 调试读整屏图撑爆上下文","file":"scripts/screen-inspect.mjs","detail":"canvas 无 dump→退回逐张 read_image 整屏图(单张1.6-3.3MB)；新增 OCR→文本/裁剪降采样出小图(打印估算视觉 token)；ocrNav.waitFor 异常自带末帧文本；规则化到 AGENTS§2"}
+    {
+      "topic": "job owner",
+      "file": "src/core/jobs-adapter.ts",
+      "detail": "owner=exec.agent.id 贯通"
+    },
+    {
+      "topic": "idempotency stuck",
+      "file": "src/task/lifecycle.ts",
+      "detail": "jobs.start 失败回滚+force 重跑"
+    },
+    {
+      "topic": "readonly sandbox",
+      "file": "scripts/*",
+      "detail": "--patch 叠加 / install 脚本"
+    },
+    {
+      "topic": "safety text gap",
+      "file": "src/core/safety.ts",
+      "detail": "assertTapSafe 补检 text（P2 发现）"
+    },
+    {
+      "topic": "adb binary screencap",
+      "file": "src/device/adb.ts",
+      "detail": "screencap 走 pull 文件而非 utf8"
+    },
+    {
+      "topic": "adb key home",
+      "file": "/home/liuqiaoqiao/.android",
+      "detail": "配对密钥同步到 dsh 进程 HOME，避免 unauthorized"
+    },
+    {
+      "topic": "真机结算页无 id",
+      "file": "src/platform/meituanReal.ts",
+      "detail": "坐标/行抽取（buildRows+amountNearLabel）替代缺失 resource-id"
+    },
+    {
+      "topic": "待使用红包误当已减",
+      "file": "src/platform/meituanReal.ts",
+      "detail": "转 optionalSaving(presumed)，不进 discounts/不抵扣 → 实付不再被算低 15 元"
+    },
+    {
+      "topic": "付款按钮漏拦(极速支付)",
+      "file": "src/core/safety.ts",
+      "detail": "FORBIDDEN_TEXTS 补 极速支付/立即付款等（真机发现）"
+    },
+    {
+      "topic": "schemastery 无 optional/nullable",
+      "file": "src/config.ts",
+      "detail": "可选字段用裸 schema；可空用 z.union([z.number(),z.const(null)]).default(null)"
+    },
+    {
+      "topic": "策略假断言可用",
+      "file": "src/price/strategies.ts",
+      "detail": "配置/记账最多 presumed；星期/门槛/日限只降级 known_unavailable；effectivePrice 仍只扣 verified&&!alreadyIncluded"
+    },
+    {
+      "topic": "跨平台误互斥",
+      "file": "src/price/strategies.ts",
+      "detail": "applyCrossPlatformExclusivity 默认不互斥，仅 crossPlatformExclusive=true 且他平台 verified 才降级"
+    },
+    {
+      "topic": "坐标行抽取重复实现",
+      "file": "src/platform/settleRows.ts",
+      "detail": "美团/饿了么共享聚行+标签→金额+结果卡/可点原语，避免复制；amountNearLabel 改中心点比较"
+    },
+    {
+      "topic": "掉线无限挂起",
+      "file": "src/device/adb.ts",
+      "detail": "stepTimeoutMs 传了却未使用+runNativeCommand 无默认超时→设备掉线单条 adb 永远挂起；新增 withDeadline(AbortSignal.timeout/any，不自造 timer，守 §2.2)，所有 adb/run 通道包裹，超时抛 timeout 供 isRetryable 重试（+2 回归）"
+    },
+    {
+      "topic": "canvas 调试读整屏图撑爆上下文",
+      "file": "scripts/screen-inspect.mjs",
+      "detail": "canvas 无 dump→退回逐张 read_image 整屏图(单张1.6-3.3MB)；新增 OCR→文本/裁剪降采样出小图(打印估算视觉 token)；ocrNav.waitFor 异常自带末帧文本；规则化到 AGENTS§2"
+    },
+    {
+      "topic": "静默错价①购物车跨任务累积",
+      "file": "src/platform/{elemeReal,meituanReal}.ts",
+      "detail": "购物车不清空→1→2→3件,多件费用x多件实付算术自洽→静默错价(¥44.96/¥75.94)；解析「共N件」为页面事实+加购前要求购物车为空(非空交人工,不自动清空)"
+    },
+    {
+      "topic": "静默错价②饿了么伪造商品/店名",
+      "file": "src/platform/elemeReal.ts",
+      "detail": "storeName/itemName 直接=cond.item(等于没核对)→实际加「小炒猪肝」报「小炒肉」;改从版面诚实抽取,剥区购/堂食店/蜂鸟准时达角标与OCR前缀噪声,抽不到才退回查询词,规格绝不伪造"
+    },
+    {
+      "topic": "静默错价③两道菜各x1",
+      "file": "src/platform/{elemeReal,meituanReal}.ts",
+      "detail": "只取当前菜品行x1与期望一致→校验通过,但payable是两道菜总额(¥49.78=26.98+28.88+…);件数改整页所有商品行xN之和(优先共N件)"
+    },
+    {
+      "topic": "内外两层重试相乘重复加购",
+      "file": "src/platform/types.ts+src/task/runner.ts",
+      "detail": "runner withRetry 每轮新建 AddToCartState 使内层去重失效→每重试多买一件(1→3);PlatformStrategy.idempotentEnter=false 让 runner 跳过外层重试"
+    },
+    {
+      "topic": "默认规格菜品不弹规格窗",
+      "file": "src/platform/elemeReal.ts",
+      "detail": "点选规格直接加购不弹窗→旧逻辑等不到规格窗判失败;改以底部购物车条出现判定加购成功,两者皆无才失败(且不重试)"
+    },
+    {
+      "topic": "动画页 dump 永不 idle",
+      "file": "src/device/adb.ts",
+      "detail": "店铺页视频/GIF/KTV banner 时标准/压缩/--windows 全报 could not get idle state 且不产文件;兜底上滑让动图离屏后重试(实测滚动后193KB新鲜hierarchy)"
+    },
+    {
+      "topic": "waitFor 慢设备零重试",
+      "file": "src/platform/ocrNav.ts",
+      "detail": "全屏OCR 6.2s/帧 vs 6-8s预算→只够1帧;至少2帧+按首帧耗时动态放大预算+8帧上限;waitFor/look 支持 ROI(底部条~1s/帧);isCartBar 改结构信号(券后/免配送费/凑单)"
+    },
+    {
+      "topic": "分组缺 snapshotId / canvas 截图不脱敏",
+      "file": "src/price/{model,engine}.ts+src/device/redact.ts",
+      "detail": "QuoteGroup 无 snapshotId→双平台无法追溯,补上;canvas 页无dump XML→截图永不脱敏落盘→新增 sensitiveOcrRects 按OCR bbox脱敏(仍坚持无法确认脱敏则不落原图)"
+    }
   ],
   "deliverables": [
-    "src/**","test/**","scripts/web-plugin.patch.yml","scripts/install-into-web-profile.sh",
-    "scripts/device-min-experiment.sh","scripts/device-rehearsal.mjs","scripts/evidence-inspect.mjs","scripts/screen-inspect.mjs",
-    "test/fixtures/meituan-settle.real-device.xml","test/fixtures/eleme-settle.real-device.xml","test/fixtures/eleme-confirm.real-ocr.json",
-    "src/price/strategies.ts","src/platform/{elemeReal,settleRows,navigator,ocrNav}.ts","src/platform/selectors/eleme.ts",
-    "docs/conversation-log.md","CHANGELOG.md[19]-[46]"
+    "src/**",
+    "test/**",
+    "scripts/web-plugin.patch.yml",
+    "scripts/install-into-web-profile.sh",
+    "scripts/device-min-experiment.sh",
+    "scripts/device-rehearsal.mjs",
+    "scripts/evidence-inspect.mjs",
+    "scripts/screen-inspect.mjs",
+    "test/fixtures/meituan-settle.real-device.xml",
+    "test/fixtures/eleme-settle.real-device.xml",
+    "test/fixtures/eleme-confirm.real-ocr.json",
+    "src/price/{strategies,model,engine}.ts",
+    "src/platform/{elemeReal,meituanReal,settleRows,navigator,ocrNav,types}.ts",
+    "src/platform/selectors/eleme.ts",
+    "src/device/{adb,redact}.ts",
+    "src/task/runner.ts",
+    "test/{ocrNavFlow,device-p2,platform-p3,pricing.engine,redact}.test.ts",
+    "docs/conversation-log.md",
+    "CHANGELOG.md[19]-[50]"
   ]
 }
 ```
 
 ---
 
-*会话快照：2026-10-26 21:30 · 分支 `main`（含 P6 实现、省上下文工具、掉线超时修复，本轮分 3 次提交）；**P0–P5 完成，且真机端到端已闭环（2026-10-25）并二次复跑通过（2026-10-26）**。里程碑：**P2 真机 §8.4 PASS（Lenovo TB321FU / Android 16）**；**P3 美团真机全流程 PASS**（payable=19.9 balanced、confidence=high）；**P4 多平台 + 策略四态 + 谨慎互斥 + 统一输入快照分组**（DoD①②③④ 均落地）；**P4 真机复测** 饿了么 canvas 自绘 → ROI OCR，真机 payable=¥20.8；**P5 打磨（一/二/三）**：`device/redact.ts` 零依赖 PNG 截图脱敏（真机 mt-s6 `masked=2` 对照确认涂黑、无法脱敏则不落图）、`task/cleanup.ts` 证据/结果 TTL+保留上限清理、`core/retry.ts` 瞬时重试（**验证码/支付绝不重试**）、`runner.bindEvidence` 证据真实绑定（dump+脱敏图+OCR 逐词框）、`device/capture.ts` 失败取证同样默认脱敏、`device/adb.ts` 无线调试 mDNS 自动发现/回连（修旧 host:port 失效）。**2026-10-25 真机端到端复测 PASS**：`runCompare` 一步跑通 —— **payable=¥29.88、balanced=true、confidence=high、needsConfirm=false**，账目 34.78−3.9−1=29.88 平账、15 元待使用红包标 `presumed` 不抵扣、证据脱敏 `applied`。**2026-10-26 修复 `getResult` 工具输出「not lossless JSON」（清洗 undefined，+4 回归）。2026-10-26 新增 P6 饿了么 canvas OCR 盲导航（`platform/ocrNav.ts` + `elemeReal.runElemeOcrNav`，canvas 支付红线 `assertOcrTapSafe`，拼单页守卫），离线 185/185 全绿；治理"上下文超出"（`scripts/screen-inspect.mjs` + OCR 失败自带末帧文本）；修复"设备掉线时 adb 命令无限挂起"（`adb.ts` `withDeadline` 硬超时）。P6 饿了么真机端到端仍待平板重新上线复跑（当前设备离线，非代码问题）。** 安全红线全程未触碰（无下单/支付路径、验证码即停零点击、仓内仅脱敏 fixture）。*
+*会话快照：2026-10-27 19:10 · 分支 `main`（=`origin/main`=`2672cf1`，工作区干净）*
+*本轮（2026-10-27）承接上一会话，把 **P6 饿了么 canvas OCR 盲导航从"代码就绪"推到"真机端到端 PASS"**，并完成**双平台真机联跑**、在过程中挖出并修复 **8 个真实缺陷**（其中 3 个是**静默错价**风险：购物车跨任务累积、「两道菜各 x1」单行取数、饿了么伪造商品名）。*
+*- **P6 真机 PASS**：`payable=¥13.98`、`confidence=medium`、`delta=0.00` 完美平账，与结算页「立即支付 ¥13.98」一致（87.6s 全自动：首页→搜索→选店→选规格→加购→去结算→读实付）。*
+*- **双平台联跑**：美团 `¥49.78`（`delta=0`、`confidence=high`、`needsConfirm=false`）/ 饿了么 `¥13.98`（`delta=0`）；脏数据（购物车残留、串品）时系统**判不可比 + `needsConfirm` + `cheapest` 只取可信者** —— **宁可不给结论，也绝不给错价**。*
+*- **门禁**：`pnpm check` **204/204 全绿**（本轮 +12 回归）；`src/price` 行覆盖 97.15%。*
+*- **红线**：全程只读；未点任何提交/支付；美团字序验证码**立即停、零识别零绕过**；调试仅清空自动化自己加进购物车的测试菜品（用户商品一件未动，逐屏核对）；仓内仅脱敏 fixture。*
+*- **待人工**：美团页面的字序验证码需用户本人通过。*
