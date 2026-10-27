@@ -474,3 +474,34 @@ test('extract (real 神抢手): no "券前" label → payable from left of "共�
   assert.equal(quote.arithmetic.balanced, true)
   assert.equal(quote.needsConfirm, false)
 })
+
+test('extractMeituanSettle: 结算页含两道菜各 x1 时，件数应为 2（防"单行 x1 通过校验但总额是多道菜"的静默错价）', async () => {
+  const { extractMeituanSettle } = await import('../src/platform/meituanReal.ts')
+  const { parseUiNodes } = await import('../src/device/uixml.ts')
+  const xml = `<hierarchy>
+    <node text="江西小炒(盛夏路店)" bounds="[50,1004][310,1046]" />
+    <node text="腐竹炒肉木桶饭" bounds="[195,1081][440,1119]" />
+    <node text="1 人份，不辣" bounds="[195,1124][353,1163]" />
+    <node text="x1" bounds="[195,1163][295,1197]" />
+    <node text="小炒肉木桶饭" bounds="[195,1297][405,1335]" />
+    <node text="1 人份，微辣" bounds="[195,1340][353,1379]" />
+    <node text="x1" bounds="[195,1379][295,1413]" />
+    <node text="商品原价" bounds="[50,1521][210,1571]" />
+    <node text="55.86" bounds="[1422,1526][1520,1566]" />
+    <node text="打包费" bounds="[50,1609][155,1654]" />
+    <node text="2" bounds="[1497,1611][1520,1651]" />
+  </hierarchy>`
+  const cond = {
+    snapshotId: 's',
+    item: '小炒肉木桶饭',
+    qty: 1,
+    spec: [],
+    composition: [],
+    deliverTo: { city: '上海', lat: 31.23, lng: 121.47 },
+    fixedAt: '2026-10-27T00:00:00+08:00',
+    hash: 'h',
+  }
+  const facts = extractMeituanSettle(parseUiNodes(xml), cond, xml)
+  // 关键：总件数=2（两道菜各 1），而不是只看当前菜品行的 1
+  assert.equal(facts.qty, 2)
+})

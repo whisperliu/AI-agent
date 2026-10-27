@@ -135,21 +135,29 @@ export function extractMeituanSettle(
       /[x×]\s*(\d+)/.exec(itemNode?.text ?? '') ?? /[x×]\s*(\d+)/.exec(located.itemText ?? '')
     qty = m ? Number.parseInt(m[1] ?? '1', 10) : located.qty
   }
-  // 件数兜底（2026-10-27 真机，与饿了么同一防线）：结算页常有「共 N 件」/「合计 N 件」，
-  // 这是**稳定的结构事实**。购物车跨任务累积时，若不核对件数，会静默把多件总额当单件价报出。
-  if (!Number.isFinite(qty) || qty <= 0) {
-    for (const n of nodes) {
-      const t = (n.text ?? '').trim()
-      const m = /共\s*(\d+)\s*件/.exec(t) ?? /合计\s*(\d+)\s*件/.exec(t)
-      if (m) {
-        const k = Number.parseInt(m[1] ?? '', 10)
-        if (Number.isFinite(k) && k > 0) {
-          qty = k
-          break
-        }
+  // **件数校验（2026-10-27 真机，静默错价防线）**：结算页商品行会各带一个 `xN`。
+  // 关键教训：只看"当前菜品行"的 `x1` 是不够的——真机上购物车里有**两道菜各 x1**时，
+  // 单行 `x1` 与期望一致（校验通过），但实付其实是两道菜的总额（¥49.78 = 26.98+28.88+…），
+  // 属于**更隐蔽的静默错价**。因此这里统计**整页所有商品行的数量之和**作为页面件数。
+  const allQty = [...nodes]
+    .map((n) => /^[x×]\s*(\d+)$/i.exec((n.text ?? '').trim()))
+    .filter((m): m is RegExpExecArray => Boolean(m))
+    .reduce((sum, m) => sum + Number.parseInt(m[1] ?? '0', 10), 0)
+  let pageQty = Number.NaN
+  for (const n of nodes) {
+    const t = (n.text ?? '').trim()
+    const m = /共\s*(\d+)\s*件/.exec(t) ?? /合计\s*(\d+)\s*件/.exec(t)
+    if (m) {
+      const k = Number.parseInt(m[1] ?? '', 10)
+      if (Number.isFinite(k) && k > 0) {
+        pageQty = k
+        break
       }
     }
   }
+  // 页面件数优先级：显式「共 N 件」> 各商品行 xN 之和（都拿不到才用单行/期望值）。
+  if (Number.isFinite(pageQty)) qty = pageQty
+  else if (allQty > 0) qty = allQty
   if (!Number.isFinite(qty) || qty <= 0) qty = cond.qty
 
   // 费用明细：id 优先（fee_<kind>），再"坐标/行"兜底（真机 id 几乎没有）。

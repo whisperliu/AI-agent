@@ -522,6 +522,14 @@ export function extractElemeSettleFromOcr(
       }
     }
   }
+  // 兜底：没有「共 N 件」时，把各商品行的 xN 累加（防止"只看单行 x1"漏掉多道菜）。
+  if (!Number.isFinite(pageQty)) {
+    const sum = words
+      .map((w) => /^[x×]\s*(\d+)$/i.exec((w.t ?? '').trim()))
+      .filter((m): m is RegExpExecArray => Boolean(m))
+      .reduce((a, m) => a + Number.parseInt(m[1] ?? '0', 10), 0)
+    if (sum > 0) pageQty = sum
+  }
 
   // 店名/菜名/规格：**从版面事实抽取**（2026-10-27 真机）。
   // 此前这里把 storeName/itemName 直接写成 `cond.item`（等于"没核对"）——真机踩到：
