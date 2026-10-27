@@ -201,3 +201,44 @@ test('compare: deviated conditions force non-comparable group', () => {
   const g = r.groups.find((x) => x.quotes.some((q) => q.platform === 'meituan'))
   assert.equal(g?.comparable, false)
 })
+
+test('分组结果带统一输入快照 id（双平台对比可追溯，§6.6）', async () => {
+  const { compare } = await import('../src/price/engine.ts')
+  const cond = {
+    snapshotId: 'snap-abc123',
+    item: '小炒肉木桶饭',
+    qty: 1,
+    spec: [],
+    composition: [],
+    deliverTo: { city: '上海', lat: 31.23, lng: 121.47 },
+    fixedAt: '2026-10-27T00:00:00+08:00',
+    hash: 'h-abc123',
+  }
+  // 无 quotes 时 groups 为空属正常；这里验证有 quote 时组带 snapshotId
+  const quotes = (await import('../src/price/engine.ts')).priceQuote({
+    platform: 'meituan',
+    store: { name: '江西小炒', matchedScore: 1 },
+    item: { name: '小炒肉木桶饭', qty: 1, matchedScore: 1 },
+    fees: [{ kind: 'goods', label: '商品', amount: 20, source: 'tree' }],
+    discounts: [],
+    payable: 20,
+    snapshotId: cond.snapshotId,
+    snapshotHash: cond.hash,
+    extraction: { confidence: 'high', byField: { payable: 'tree' } },
+    evidence: {
+      quoteId: 'q1',
+      platform: 'meituan',
+      storeName: '江西小炒',
+      itemSpec: '小炒肉木桶饭 x1',
+      qty: 1,
+      feeBreakdown: [],
+      rawExtraction: { treeDumpPath: '/tmp/x.xml' },
+      capturedAt: new Date().toISOString(),
+      validUntil: new Date(Date.now() + 60_000).toISOString(),
+      redaction: 'applied',
+    },
+  })
+  const r2 = compare([quotes], cond, { taskId: 't2', now: Date.now() })
+  assert.equal(r2.groups.length, 1)
+  assert.equal(r2.groups[0]?.snapshotId, 'snap-abc123')
+})

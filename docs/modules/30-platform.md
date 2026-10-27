@@ -84,6 +84,8 @@ interface PlatformStrategy {
   - **加购跨重试幂等（红线）**：`runElemeOcrNav` 的重试是整条重走，若失败在加购之后会**重复加购**（真机实测同菜 ×4、账单 13.98→125.92）。现用跨重试共享 `AddToCartState`：加购成功即置位，后续重试跳过加购；已点「选规格」但未确认加购成功则**如实失败不再重试**（宁失败不重复加购）。
   - **真机读数（2026-10-27）**：`payable=¥13.98`、`confidence=medium`、`delta=0.00`（2+9+11.98=22.98 − 免配送费 9 = 13.98），与结算页「立即支付 ¥13.98」一致；全流程 87.6s。
   - **失败自解释（省上下文）**：`createOcrNav().waitFor` 超时抛出的异常**自带末帧 OCR 文本（带 y 坐标、截断到 ~20 行/60 词）**，排查"卡在哪页"看异常即可，**不必再 `read_image` 读整屏图**（2026-10-26 教训：一次饿了么调试读了 28 张整屏图致上下文超出）。
+- **两条静默错价防线（2026-10-27 双平台真机）**：① **件数核对**——结算页「共 N 件」作为页面事实回传，`detectDeviations` 在 N≠期望 时判不可比（购物车跨任务累积会让"多件费用×多件实付"算术自洽，静默错价）；饿了么加购前还**要求购物车为空**，非空即交人工（不自动清空，避免删用户商品）。② **诚实抽取**——`extractElemeSettleFromOcr` 不再伪造 `storeName/itemName=cond.item`，改为从版面事实抽店名/菜名/规格（剥"区购/堂食店/蜂鸟准时达"角标与 OCR 前缀噪声），抽不到才退回查询词、规格绝不伪造。
+- **加购与重试幂等（红线）**：`PlatformStrategy.idempotentEnter=false`（饿了么）→ runner **跳过外层重试**，避免"内外两层重试相乘"重复加购（真机曾 1→3 件）；规格窗**可能不出现**（默认规格菜品），此时以"底部购物车条出现"判定加购成功。
 - **离线全流程回放（P6 收尾，`test/ocrNavFlow.test.ts`）**：`runElemeOcrOnce/runElemeOcrNav` 接受可选 `sleep` 注入（默认 `sleepMs`），使整条"首页→搜索→选店→选规格→去结算→读实付"可在**无真机**时用假驱动回放。4 例钉住：正常走查读出 payable 且 6 次 `tapPoint` 顺序正确（搜索框/输入框/第一家店/选规格/选好了/去结算）、**加购（选规格）只点 1 次**、验证码→`NeedsHumanError(captcha)` 读 1 帧即停（`attempts=3` 也不重试）、拼单详情页→`NeedsHumanError` 在加购**之前**拦截且不重试、瞬时故障（launchApp 抛 timeout）整条重试一次后成功。意义：设备离线时改这段代码不再"盲改"。
 - **OCR 逐词框留存（P5）**：`extractElemeSettleFromOcr` 返回 `ocrWords`（原始 `t/c/bbox`），`task/runner` 写入 `evidence.rawExtraction.ocrBoxes`，便于人工按坐标复核金额；截图（已脱敏）同时作为证据落盘。
 - **fixture**：`test/fixtures/eleme-settle.real-device.xml`（脱敏；30+3+1−5=29 balanced、`confidence=high`）。

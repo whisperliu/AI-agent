@@ -507,6 +507,82 @@ export function extractElemeSettleFromOcr(
   // 说明：结算页底部"已优惠 ¥X"是**整单已减汇总**（已含在 payable 与"优惠后"商品价里），
   // **绝不**作为独立 discount 叠加——否则与"优惠后价"重复计算（§5.3）。仅在 needConfirm 说明里体现。
 
+  // 件数核对（2026-10-27 真机）：「共 N 件 / 合计 N 件」是结算页**稳定的结构事实**。
+  // 真机踩过的坑：电商购物车会**跨任务累积**（自动化重复加购），导致 payable 被算成多件总额，
+  // 而算术只是"内部自洽"（多件的费用与多件实付也能平）→ 会**静默给出错误价格**。
+  // 这里把"页面件数 ≠ 期望件数"作为**硬事实**回传给上层（detectDeviations 会转成不可比 + needsConfirm）。
+  let pageQty = Number.NaN
+  for (const r of rows) {
+    const m = /共\s*(\d+)\s*件/.exec(r.text) ?? /(\d+)\s*件商品/.exec(r.text)
+    if (m) {
+      const n = Number.parseInt(m[1] ?? '', 10)
+      if (Number.isFinite(n) && n > 0) {
+        pageQty = n
+        break
+      }
+    }
+  }
+
+  // 店名/菜名/规格：**从版面事实抽取**（2026-10-27 真机）。
+  // 此前这里把 storeName/itemName 直接写成 `cond.item`（等于"没核对"）——真机踩到：
+  // 查询「小炒肉木桶饭」实际加购的是「小炒猪肝木桶饭」，却被谎报成查询词，导致
+  // ① 串品无法被发现 ② 与美团同菜无法归组（规格一边空一边"1人份，微辣"→ 拆成两组、cheapest=null）。
+  // 现在：菜品名取"与查询词最相似、且不是纯价格/标签"的 OCR 行；店名取菜品行上方的门店行；
+  // 规格取菜品同行/邻行的口味词。抽不到就如实留空（引擎会因 itemScore 低而判不可比）。
+  const isPriceRow = (t: string) =>
+    PRICE_ONLY_RE.test(t.replace(/¥|￥/g, '').trim()) || /^¥/.test(t.trim())
+  /** 去掉行尾/行内的金额片段（OCR 常把"菜名 ¥29.98"聚成一行）。 */
+  const stripMoney = (t: string) =>
+    t
+      .replace(/[¥￥]?\s*\d+(?:\.\d{1,2})?\s*元?/g, '')
+      .replace(/\s+/g, '')
+      .trim()
+  const NOISE_RE =
+    /合计|已优惠|打包费|配送费|服务费|店铺活动|红包|优惠后|实付|立即支付|请选择|立即送出|配送|订单备注|餐具|换购|免单|准时达|起赔/
+  let itemName = ''
+  let bestScore = 0
+  for (const r of rows) {
+    const t = stripMoney(r.text)
+    if (t.length < 3 || t.length > 30) continue
+    if (isPriceRow(t) || NOISE_RE.test(t)) continue
+    // 门店行（含"XX店"）不是菜品候选（否则"江西小炒(盛夏路店)"会被截成"小炒(盛夏路店)"）。
+    if (/[(（][^）)]{0,10}店[)）]|路店|分店/.test(t)) continue
+    // OCR 常把菜名前粘上噪声（如"二呈小炒猪肝木桶饭"）→ **从第一个"属于查询词的字符"开始截取**，
+    // 剥掉不在查询词里的前缀噪声。剪前缀不会切出"木桶饭"这类碎片（那需要剪后缀）。
+    const qChars = new Set([...cond.item])
+    let cand = t
+    for (let k = 0; k < t.length; k++) {
+      if (qChars.has(t[k]!)) {
+        cand = t.slice(k)
+        break
+      }
+    }
+    const candScore = itemScore(cand, cond.item)
+    if (candScore > bestScore) {
+      bestScore = candScore
+      itemName = cand
+    }
+  }
+  // 规格：优先在"菜品行"里找口味词；找不到再看邻行（OCR 常把规格单独成行）。
+  let itemSpec: string | undefined
+  const SPEC_RE = /(\d+\s*人份|[不微中重超]辣|大份|小份|中份|加辣|少辣|[冰热]|去冰|半糖)/
+  const dietRow = rows.find((r) => SPEC_RE.test(r.text))
+  const diet = dietRow ? SPEC_RE.exec(dietRow.text) : null
+  if (diet) itemSpec = diet[1]
+  // 店名：菜品行上方、形如"XX店/XX(路店)"的行；抽不到就留空（不伪造）。
+  let storeName = ''
+  const storeRow = rows.find(
+    (r) => /[(（].{0,10}店[)）]|路店|分店|店$/.test(r.text) && r.text.length < 40,
+  )
+  if (storeRow) {
+    const flat = storeRow.text.replace(/\s+/g, '')
+    // 只取"门店名(XX店)"这一段，剥掉同行的其他噪声（如"...蜂鸟准时达"/"区购..."）。
+    // "区购/堂食店"等是平台的团购/堂食角标，不是店名的一部分。
+    const cleaned = flat.replace(/^(?:区购|堂食店|堂食)+/, '')
+    const m = /([\u4e00-\u9fffA-Za-z0-9·]{2,14}[（(][^）)]{0,10}店[)）])/.exec(cleaned)
+    storeName = (m ? m[1]! : cleaned).replace(/蜂鸟准时达|准时达/g, '')
+  }
+
   // 关键字段最低 OCR 置信（0–1）→ confidence 永不 high。
   const confs = [pay.conf, ...fees.map(() => 100), ...discounts.map(() => 100)].filter((c) => c > 0)
   const minConf = confs.length ? Math.min(...confs) : 0
@@ -522,11 +598,12 @@ export function extractElemeSettleFromOcr(
   for (const f of fees) byField[f.kind] = 'ocr'
 
   return {
-    storeName: cond.item,
+    storeName: storeName || '(未知门店)',
     storeAmapId: undefined,
-    itemName: cond.item,
-    itemSpec: undefined,
-    qty: cond.qty,
+    itemName: itemName || cond.item,
+    itemSpec,
+    // 有「共 N 件」就用页面事实（runner 的 detectDeviations 会在 N≠期望 时降级）；否则用期望值。
+    qty: Number.isFinite(pageQty) ? pageQty : cond.qty,
     composition: undefined,
     fees,
     discounts,
@@ -560,6 +637,19 @@ export const ELEME_ROI = {
   /** 底部操作条（购物车合计 + 去结算/领券结算）。 */
   bottomBar: { x: 0, y: 2150, w: 1600, h: 410 } as OcrBox,
 } as const
+
+/**
+ * 底部购物车条是否已出现（"可以去结算"）。
+ *
+ * 2026-10-27 真机反复踩坑：底部「去结算」是**橙色按钮上的白字**，OCR 常把它读成「丝 / sa / 去 = 结算」，
+ * 甚至整行丢失 → 用 `/结算/` 判定会随机失败（同一页面时好时坏）。
+ * 因此改为**结构信号**：底部条只要出现「券后 / 免配送费 / 打包费 / 凑单 / 合计」任一，
+ * 就说明购物车已成立（这些词 OCR 稳定度高得多）。按钮文字仅作加分项。
+ */
+export function isCartBar(ws: OcrWord[]): boolean {
+  const t = ws.map((w) => w.t ?? '').join('')
+  return /结算|券后|免配送|打包费|凑单|合计|购物车/.test(t)
+}
 
 /** 是否具备 OCR 盲导航所需能力（真机 adb：tapPoint + inputText + key + screencap）。 */
 export function supportsOcrNav(driver: Driver): boolean {
@@ -697,18 +787,32 @@ export async function runElemeOcrOnce(
     )
   }
 
+  // 4.6) **购物车必须为空**（2026-10-27 真机，红线级）。
+  //      电商购物车会跨任务保留；若上一次运行残留 1 件，本次再加 1 件 → 结算页「共 2 件」，
+  //      payable 变成两件总额，而**算术仍自洽**（两件费用与两件实付能平）→ 会静默给出错误价格
+  //      （真机实测 ¥13.98 变成 ¥44.96/¥60.96）。这里在加购前检查底部条金额是否为 ¥0：
+  //      非空则**如实交人工**（绝不自动清空购物车——那会删掉用户自己的商品）。
+  if (!state.added) {
+    // 直接复用**店铺页那张全屏 OCR**（已含底部购物车条），不再额外截屏/OCR（省时且避免多一帧）。
+    const barText = words.map((w) => w.t ?? '').join('')
+    const amounts = words.filter((w) => /\d/.test(w.t ?? '')).map((w) => ocrMoney(w.t))
+    const nonZero = amounts.some((v) => Number.isFinite(v) && v >= 1)
+    // 只有"底部条出现金额且非 0"才算购物车非空（避免把凑单/满减文案里的数字误判）。
+    if (nonZero && /券后|结算|合计/.test(barText)) {
+      throw new NeedsHumanError(
+        'environment',
+        '饿了么购物车非空（底部已有合计金额）：为避免把多件总额当成单品实付，请先手动清空购物车后重跑',
+      )
+    }
+  }
+
   // 5) 加购：点首个菜「选规格」→ 弹窗「选好了」。
   //    ⚠️ 红线：**整单只加购一次**。加购有副作用、非幂等——点多个候选 y 会逐个加菜（真机踩过：一次误加 3 个菜）；
   //    整条重试也会重复加（2026-10-27 真机：同一道菜加到 ×4）。故用跨重试的 `state.added` 去重：
   //    一旦加购成功，后续重试**跳过加购**，只重走「去结算→读实付」。
   if (state.added) {
     // 已加购：本次重试无需再点「选规格」，直接去结算。
-    words = await nav.waitFor(
-      (ws) => /结算|购物车|券后/.test(allText(ws)),
-      '购物车栏',
-      20000,
-      ELEME_ROI.bottomBar,
-    )
+    words = await nav.waitFor(isCartBar, '购物车栏', 20000, ELEME_ROI.bottomBar)
   } else {
     const specY = locateFirstDishSpecY(words, L.storeFirstDishSpec.y)
     state.specTapped = true
@@ -722,17 +826,42 @@ export async function runElemeOcrOnce(
         '点「选规格」后进入「拼单详情」而非规格弹窗（该菜已在拼单中）；请先在饿了么取消/完成该拼单后重试',
       )
     }
-    words = await nav.waitFor((ws) => /份量|辣度|选好了|数量/.test(allText(ws)), '规格弹窗', 15000)
-    await nav.tapAt(words, L.pickDone, '选好了')
-    // 到这一步即视为**已下单成功**：立刻置位，保证后续任何重试都不再点加购。
-    state.added = true
-    await sleep(2200)
-    words = await nav.waitFor(
-      (ws) => /结算|购物车|券后/.test(allText(ws)),
-      '购物车栏',
-      20000,
-      ELEME_ROI.bottomBar,
-    )
+    // 规格弹窗可能**不出现**（2026-10-27 真机：该店菜品带默认规格，点「选规格」直接加购）。
+    // 因此这里不能把"没有规格窗"当失败——要看**加购到底成没成**（底部购物车条是否出现）。
+    let specShown = true
+    try {
+      words = await nav.waitFor(
+        (ws) => /份量|辣度|选好了|数量/.test(allText(ws)),
+        '规格弹窗',
+        12000,
+      )
+    } catch {
+      specShown = false
+      words = await nav.look()
+    }
+    if (specShown) {
+      // 有规格窗 → 选默认项后确认加购。
+      await nav.tapAt(words, L.pickDone, '选好了')
+      state.added = true
+      await sleep(2200)
+      words = await nav.waitFor(isCartBar, '购物车栏', 20000, ELEME_ROI.bottomBar)
+    } else {
+      // 无规格窗：可能"已直接加购"，也可能"没加上"。用底部购物车条判定**事实**。
+      const barOk = isCartBar(words)
+      if (!barOk) {
+        // 再给一点时间让底部条刷新（加购动画/网络回包）。
+        try {
+          words = await nav.waitFor(isCartBar, '购物车栏', 8000, ELEME_ROI.bottomBar)
+        } catch {
+          // 未确认加购成功：**绝不重试**（非幂等），如实失败交人工。
+          throw new Error(
+            '点「选规格」后既无规格弹窗、也未见购物车条；无法确认是否已加购（非幂等，不自动重试）',
+          )
+        }
+      }
+      // 底部已出现购物车条 → 视为加购成功（置位，后续重试不再点加购）。
+      state.added = true
+    }
   }
 
   // 6) 去结算（按钮文案在真机上是「领券结算 / 去结算」，都有"结算"）。

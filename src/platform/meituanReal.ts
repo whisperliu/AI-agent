@@ -135,6 +135,21 @@ export function extractMeituanSettle(
       /[x×]\s*(\d+)/.exec(itemNode?.text ?? '') ?? /[x×]\s*(\d+)/.exec(located.itemText ?? '')
     qty = m ? Number.parseInt(m[1] ?? '1', 10) : located.qty
   }
+  // 件数兜底（2026-10-27 真机，与饿了么同一防线）：结算页常有「共 N 件」/「合计 N 件」，
+  // 这是**稳定的结构事实**。购物车跨任务累积时，若不核对件数，会静默把多件总额当单件价报出。
+  if (!Number.isFinite(qty) || qty <= 0) {
+    for (const n of nodes) {
+      const t = (n.text ?? '').trim()
+      const m = /共\s*(\d+)\s*件/.exec(t) ?? /合计\s*(\d+)\s*件/.exec(t)
+      if (m) {
+        const k = Number.parseInt(m[1] ?? '', 10)
+        if (Number.isFinite(k) && k > 0) {
+          qty = k
+          break
+        }
+      }
+    }
+  }
   if (!Number.isFinite(qty) || qty <= 0) qty = cond.qty
 
   // 费用明细：id 优先（fee_<kind>），再"坐标/行"兜底（真机 id 几乎没有）。

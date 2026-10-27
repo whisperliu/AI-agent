@@ -878,3 +878,43 @@ test('adb driver: stepTimeout wraps every command including screencap', async ()
   await assert.rejects(() => d.screencap(), /timeout|超时/)
   assert.ok(abortables >= 1, 'screencap 命令应被摘时中止')
 })
+
+test('adb driver: 动画页面 dump 永不 idle 时，向上滚动后重试可解锁（2026-10-27 真机）', async () => {
+  // 真机实测：美团店铺页有持续动图（KTV banner/视频）时，标准/压缩/--windows 全报
+  // `could not get idle state` 且**一次也不产文件**；向上滚动让动图离开视口后 dump 才成功。
+  let scrolled = false
+  let dumpCalls = 0
+  const calls: string[][] = []
+  const runner: AdbRunner = async (argv) => {
+    calls.push(argv)
+    let a = argv.slice()
+    if (a[0] === '-s') a = a.slice(2)
+    if (a[0] === 'devices')
+      return { code: 0, stdout: 'List of devices attached\n1.1.1.1:5555\tdevice\n', stderr: '' }
+    if (a[0] === 'shell' && a[1] === 'input' && a[2] === 'swipe') {
+      scrolled = true
+      return { code: 0, stdout: '', stderr: '' }
+    }
+    if (a[0] === 'shell' && a[1] === 'uiautomator') {
+      dumpCalls++
+      // 滚动前一律报错、且不产文件；滚动后才成功
+      return scrolled
+        ? { code: 0, stdout: 'UI hierchary dumped to: /sdcard/window_dump.xml', stderr: '' }
+        : { code: 1, stdout: '', stderr: 'ERROR: could not get idle state.' }
+    }
+    if (a[0] === 'exec-out' && a[1] === 'cat')
+      return { code: 0, stdout: scrolled ? settleXml : '', stderr: '' }
+    if (a[0] === 'exec-out' && a[1] === 'uiautomator')
+      return { code: 1, stdout: '', stderr: 'ERROR: could not get idle state.' }
+    return { code: 0, stdout: '', stderr: '' }
+  }
+  const d = createAdbDriver({ serial: '1.1.1.1:5555', runner })
+  const xml = await d.dump()
+  assert.ok(xml.includes('<hierarchy'))
+  assert.ok(scrolled, '应在 dump 全败后向上滚动一次解锁')
+  assert.ok(dumpCalls >= 5, '滚动后应重新尝试 dump')
+  assert.ok(
+    calls.some((c) => c.join(' ').includes('input swipe')),
+    '应发出滚动指令',
+  )
+})

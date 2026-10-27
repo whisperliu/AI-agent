@@ -23,6 +23,10 @@ export const eleme: PlatformStrategy = {
   id: 'eleme',
   appId: 'me.ele',
   settleAnchor: SETTLE_ANCHOR,
+  // 真机链路含**加购**（非幂等副作用），且 `runElemeOcrNav` 自带内层重试（重试间共享加购去重状态）。
+  // 若再被 runner 外层重试，会内外两层相乘 → 每重试一次就多买一件（真机实测 1→3 件）。
+  // Mock 路径（enterViaOpenTag）虽幂等，但统一声明 false 更安全：宁可少重试，也绝不重复加购。
+  idempotentEnter: false,
   selectors: GENERIC_SETTLE_SELECTORS,
   async enterSettlePage(
     driver: Driver,

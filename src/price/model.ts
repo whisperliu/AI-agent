@@ -145,6 +145,11 @@ export interface ComparisonConditions {
 export interface QuoteGroup {
   key: string
   comparable: boolean
+  /**
+   * 本组所属的**统一输入快照 id**（§6.6）。比价必须以同一快照为前提，
+   * 分组结果带上后可追溯"这组价是基于哪次快照查的"（双平台对比时尤其重要）。
+   */
+  snapshotId: string
   quotes: Quote[]
 }
 

@@ -114,3 +114,18 @@ test('redactScreenshot: non-PNG input → applied=false', () => {
   assert.equal(r.applied, false)
   assert.match(r.reason ?? '', /无法解码/)
 })
+
+test('sensitiveOcrRects: canvas 页面按 OCR bbox 定位敏感区（无 dump XML 也能脱敏落图）', async () => {
+  const { sensitiveOcrRects } = await import('../src/device/redact.ts')
+  const words = [
+    { t: '小炒猪肝木桶饭', bbox: { x: 186, y: 848, w: 400, h: 40 } },
+    { t: '13812345678', bbox: { x: 40, y: 300, w: 300, h: 40 } },
+    { t: '益丰新村9号楼', bbox: { x: 40, y: 120, w: 400, h: 40 } },
+    { t: '合计', bbox: { x: 41, y: 1378, w: 80, h: 40 } },
+  ]
+  const rects = sensitiveOcrRects(words)
+  // 手机号 + 门牌地址两条命中；菜名/合计不误伤
+  assert.equal(rects.length, 2)
+  assert.ok(rects.some((r) => r.y === 300))
+  assert.ok(rects.some((r) => r.y === 120))
+})

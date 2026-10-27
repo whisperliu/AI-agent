@@ -296,6 +296,28 @@ export interface RedactResult {
  * 一站式：给定原始截图与 dump XML，定位敏感区域并掩码。
  * 无法解码 / 无敏感区域 → `applied=false`（调用方**不得**保存原图）。
  */
+/**
+ * 从 **OCR 逐词结果**里找敏感词矩形（canvas 自绘页面没有 dump XML，只能靠 OCR 文本定位）。
+ *
+ * 2026-10-27 真机：饿了么整页 canvas 自绘 → `facts.dump` 是 OCR 纯文本、**没有 bounds**，
+ * 于是 `redactScreenshot(png, dumpText)` 永远"定位不到敏感区域"→ 截图永不落盘
+ * （真机表现：`redaction=none, shot=-`，证据链缺失）。本函数补上这条路径：
+ * 把 OCR 词里像 PII 的词（手机号/地址/门牌/收件人）按它自己的 bbox 转成待涂黑矩形。
+ */
+export function sensitiveOcrRects(
+  words: { t?: string; bbox?: { x: number; y: number; w: number; h: number } }[],
+): Rect[] {
+  const rects: Rect[] = []
+  for (const w of words) {
+    const t = (w.t ?? '').trim()
+    if (!t || !w.bbox) continue
+    if (!looksSensitive(t)) continue
+    const { x, y, w: bw, h } = w.bbox
+    if (bw > 0 && h > 0) rects.push({ x, y, w: bw, h })
+  }
+  return rects
+}
+
 export function redactScreenshot(
   png: Uint8Array,
   dumpXml: string,

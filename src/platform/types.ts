@@ -58,6 +58,16 @@ export interface PlatformStrategy {
   appId: string
   /** 结算页 anchor（断言命中）。 */
   settleAnchor: string
+  /**
+   * `enterSettlePage` 是否**幂等**（可被上层安全重试）。默认 `true`。
+   *
+   * 2026-10-27 真机教训：饿了么全自动链路含**加购**（非幂等副作用），且它**自带内层重试**
+   * （`runElemeOcrNav(attempts)`，重试间共享 `AddToCartState` 去重）。若再被 runner 的
+   * `withRetry` 外层重跑，就变成"内外两层重试相乘"：外层每次都是新的 `AddToCartState`
+   * → 每重试一次就**再往购物车加一件**（真机实测 1→3 件，账单 ¥13.98→¥75.94）。
+   * 故饿了吗必须声明 `idempotentEnter: false`，由 runner 跳过外层重试（改用其自带内层重试）。
+   */
+  idempotentEnter?: boolean
   /** 控件选择器集中登记（App 改版只改 selectors/）。 */
   selectors: Record<string, string>
   /**

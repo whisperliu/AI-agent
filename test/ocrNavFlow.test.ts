@@ -16,6 +16,7 @@ import { NeedsHumanError } from '../src/core/errors.ts'
 import type { Ocr, OcrWord } from '../src/ocr/reader.ts'
 import type { Driver } from '../src/device/driver.ts'
 import type { ComparisonConditions } from '../src/price/model.ts'
+import type { PlatformStrategy } from '../src/platform/types.ts'
 
 function w(t: string, x: number, y: number, ww = 80, hh = 30, c = 0.9): OcrWord {
   return { t, c, bbox: { x, y, w: ww, h: hh } }
@@ -240,4 +241,155 @@ test('waitFor(roi)：ROI 透传给 OCR（慢设备底部条只识别 1s vs 全�
   const words = await nav.waitFor((ws) => ws.some((x) => x.t === '去结算'), '购物车栏', 5000, roi)
   assert.equal(words.length, 1)
   assert.deepEqual(rois[0], roi)
+})
+
+test('isCartBar: 底部条结构信号（去结算按钮 OCR 不稳时仍能判定）', async () => {
+  const { isCartBar } = await import('../src/platform/elemeReal.ts')
+  // 真机实拍：按钮白字被读成「丝」「sa」，但「券后约」「免配送费」稳定可读
+  assert.equal(isCartBar([w('¥60.96', 26, 2432), w('券后约', 200, 2432), w('丝', 900, 2470)]), true)
+  assert.equal(isCartBar([w('¥13.98', 176, 2432), w('免配送费', 177, 2477)]), true)
+  assert.equal(isCartBar([w('凑单', 1200, 2349)]), true)
+  // 店铺页顶部（无购物车条）不应误判
+  assert.equal(isCartBar([w('点餐', 60, 920), w('评价', 300, 920)]), false)
+})
+
+test('extractElemeSettleFromOcr: 读「共N件」为页面事实（购物车累积时能暴露不可比）', async () => {
+  const { extractElemeSettleFromOcr } = await import('../src/platform/elemeReal.ts')
+  // 真机实拍：购物车累积 2 件，页面「共 2 件 已优惠 ¥32.14」+ 合计 ¥44.96
+  const words = [
+    w('打包费', 40, 1172),
+    w('¥4', 300, 1172),
+    w('配送费', 40, 1265),
+    w('¥9', 300, 1265),
+    w('合计', 40, 1537),
+    w('¥44.96', 900, 1537),
+    w('共', 40, 2359, 30, 30),
+    w('2', 90, 2359, 20, 30),
+    w('件', 120, 2359, 30, 30),
+  ]
+  const facts = extractElemeSettleFromOcr(words, cond, '')
+  assert.equal(facts.payable, 44.96)
+  // 关键：qty 取页面事实 2（而非期望 1）→ runner 的 detectDeviations 会判不可比
+  assert.equal(facts.qty, 2)
+})
+
+test('红线：购物车非空时拒绝加购（避免多件总额被当单品实付）', async () => {
+  const HOME = [w('推荐', 100, 300)]
+  const SEARCH = [w('历史搜索', 100, 200)]
+  const RESULT = [w('销量', 60, 180)]
+  // 店铺页（全屏 OCR 含底部购物车条）：底部已有合计金额 → 购物车非空
+  const STORE = [
+    w('点餐', 60, 920),
+    w('选规格', 1470, 950, 120, 50),
+    w('¥60.96', 26, 2432),
+    w('券后约', 200, 2432),
+    w('¥40.86', 420, 2432),
+    w('免配送费', 177, 2477),
+  ]
+  const { ocr, driver, rec } = makeFake([HOME, SEARCH, RESULT, STORE])
+  await assert.rejects(
+    () => runElemeOcrNav(driver, ocr, cond, 1, sleep),
+    (e: unknown) => e instanceof NeedsHumanError && /购物车非空/.test(String(e.hint ?? '')),
+  )
+  // 关键：一次都没点「选规格」（绝不往非空购物车再加）
+  assert.equal(rec.taps.filter((t) => t.x === 1490).length, 0)
+})
+
+test('runCompare: 非幂等入口平台（饿了么）不被外层重试（避免内外重试相乘导致重复加购）', async () => {
+  const { runCompare } = await import('../src/task/runner.ts')
+  let enterCalls = 0
+  const fakeStrategy = {
+    id: 'eleme',
+    appId: 'me.ele',
+    settleAnchor: 'x',
+    idempotentEnter: false,
+    selectors: {},
+    async enterSettlePage() {
+      enterCalls++
+      throw new Error('uiautomator dump 失败（可重试特征）')
+    },
+  } as unknown as PlatformStrategy
+  const deps = {
+    driver: {},
+    ocr: { read: async () => ({ text: '', words: [] }) },
+    clock: { now: () => Date.now() },
+    dataDir: '/tmp/pa-x',
+    lockRoot: '/tmp/pa-x/locks',
+    serial: 'fake',
+    jobs: {},
+    tasks: {},
+    config: {
+      task: { retryAttempts: 3, lockWaitMs: 1000 },
+      evidence: { ttlMinutes: 10, redact: false },
+      platforms: {},
+    },
+  } as unknown as Parameters<typeof runCompare>[0]
+  const p = { update: () => {}, append: () => {} }
+  await assert.rejects(() => runCompare(deps, { taskId: 't', cond, platforms: [fakeStrategy] }, p))
+  // 即使配置 retryAttempts=3，非幂等平台也只调一次（不放大加购风险）
+  assert.equal(enterCalls, 1)
+})
+
+test('extractElemeSettleFromOcr: 商品/店名从版面抽取，绝不伪造查询词（真机串品可被发现）', async () => {
+  const { extractElemeSettleFromOcr } = await import('../src/platform/elemeReal.ts')
+  // 真机实拍：查询「小炒肉木桶饭」，实际加购的是「小炒猪肝木桶饭」
+  const words = [
+    w('江西小炒(盛夏路店)', 41, 771, 400, 40),
+    w('小炒猪肝木桶饭', 186, 848, 400, 40),
+    w('¥29.98', 900, 848, 120, 40),
+    w('不辣', 187, 896, 80, 40),
+    w('x1', 187, 933, 40, 40),
+    w('打包费', 41, 1012),
+    w('¥2', 300, 1012),
+    w('合计', 41, 1378),
+    w('¥13.98', 900, 1378),
+  ]
+  const facts = extractElemeSettleFromOcr(words, cond, '')
+  // 关键：itemName 必须是**页面实际商品**，不是查询词
+  assert.equal(facts.itemName, '小炒猪肝木桶饭')
+  assert.notEqual(facts.itemName, cond.item)
+  assert.ok(facts.storeName.includes('江西小炒'))
+  assert.equal(facts.itemSpec, '不辣')
+})
+
+test('extractElemeSettleFromOcr: 抽不到商品时留查询词（不崩），但绝不伪造规格', async () => {
+  const { extractElemeSettleFromOcr } = await import('../src/platform/elemeReal.ts')
+  const words = [w('合计', 41, 1378), w('¥13.98', 900, 1378)]
+  const facts = extractElemeSettleFromOcr(words, cond, '')
+  assert.equal(facts.itemName, cond.item) // 无证据时退回查询词
+  assert.equal(facts.itemSpec, undefined) // 规格绝不伪造
+  assert.equal(facts.storeName, '(未知门店)')
+})
+
+test('加购：无规格弹窗时按"底部购物车条出现"判定加购成功（该店菜品带默认规格）', async () => {
+  const HOME = [w('推荐', 100, 300)]
+  const SEARCH = [w('历史搜索', 100, 200)]
+  const RESULT = [w('销量', 60, 180)]
+  // 店铺页：空购物车（无券后/合计金额）
+  const STORE = [w('点餐', 60, 920), w('选规格', 1470, 950, 120, 50)]
+  // 点「选规格」后**直接加购**：没有规格弹窗，但底部条出现「券后约 ¥13.98」
+  const AFTER_ADD = [w('点餐', 60, 920), w('¥13.98', 176, 2432), w('券后约', 300, 2432)]
+  const CART = [w('去结算', 1453, 2432, 200, 60), w('券后约', 300, 2432)]
+  const SETTLE = [w('合计', 1100, 2400), w('¥13.98', 1240, 2405)]
+  const { ocr, driver, rec } = makeFake([HOME, SEARCH, RESULT, STORE, AFTER_ADD, CART, SETTLE])
+  const facts = await runElemeOcrNav(driver, ocr, cond, 1, sleep)
+  assert.equal(facts.payable, 13.98)
+  // 加购只点一次
+  assert.equal(rec.taps.filter((t) => t.x === 1490).length, 1)
+})
+
+test('extractElemeSettleFromOcr: OCR 前置噪声与小写误识时仍能取整菜名（不取"木桶饭"碎片）', async () => {
+  const { extractElemeSettleFromOcr } = await import('../src/platform/elemeReal.ts')
+  const words = [
+    w('区购江西小炒(盛夏路店)蜂鸟准时达', 41, 771, 700, 40),
+    w('二呈小炒猪肝木桶饭', 186, 848, 400, 40),
+    w('¥29.98', 900, 848, 120, 40),
+    w('合计', 41, 1378),
+    w('¥13.98', 900, 1378),
+  ]
+  const facts = extractElemeSettleFromOcr(words, cond, '')
+  // 菜名必须保留完整主体（不能因为"木桶饭"是子集而得 0.9 就取碎片）
+  assert.equal(facts.itemName, '小炒猪肝木桶饭')
+  // 店名剥掉"区购…蜂鸟准时达"噪声
+  assert.equal(facts.storeName, '江西小炒(盛夏路店)')
 })

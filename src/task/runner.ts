@@ -10,7 +10,7 @@ import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import type { Deps, ProgressPort } from '../core/container.ts'
 import { withDeviceLock } from '../core/locks.ts'
 import { withRetry } from '../core/retry.ts'
-import { redactScreenshot } from '../device/redact.ts'
+import { redactScreenshot, sensitiveOcrRects } from '../device/redact.ts'
 import type {
   CompareOptionsSpec,
   CompareResult,
@@ -83,7 +83,9 @@ export async function runCompare(
               dataDir: deps.dataDir,
             }),
           {
-            attempts: deps.config.task.retryAttempts,
+            // 非幂等入口（如饿了么：含加购副作用 + 自带内层重试）**绝不做外层重试**，
+            // 否则内外两层重试相乘会重复加购（见 PlatformStrategy.idempotentEnter 注释）。
+            attempts: strategy.idempotentEnter === false ? 1 : deps.config.task.retryAttempts,
             signal,
             onRetry: ({ attempt, error }) =>
               p.update(
@@ -264,7 +266,10 @@ export async function bindEvidence(
         gaps.push(`截图落盘失败：${err instanceof Error ? err.message : String(err)}`)
       }
     } else {
-      const r = redactScreenshot(facts.screenshot, facts.dump ?? '')
+      // 脱敏矩形来源①：dump XML（控件树页面）；②：OCR 逐词 bbox（canvas 自绘页面没有 XML，
+      // 此前只用 dump → 饿了么截图永远"定位不到敏感区域"而不落盘，证据链缺失）。
+      const ocrRects = facts.ocrWords ? sensitiveOcrRects(facts.ocrWords) : []
+      const r = redactScreenshot(facts.screenshot, facts.dump ?? '', ocrRects)
       if (r.applied && r.png) {
         try {
           await writeFileAtomic(shotPath, r.png, { mode: 0o600, dirMode: 0o700 })

@@ -404,6 +404,20 @@ export function createAdbDriver(opts: AdbDriverOptions): AdbDriver {
         await new Promise((r) => setTimeout(r, 500))
       }
     }
+    // 兜底（2026-10-27 真机实测）：**页面有持续动画（店铺页视频/GIF/KTV banner）时，
+    // `uiautomator dump` 无论加固/压缩/--windows 都会一直报 `could not get idle state`，
+    // 一次也不产文件。** 唯一稳定解法是让动态元素离开视口：向上滚动一段后 dump 即成功
+    // （真机验证：滚动后 193KB 新鲜 hierarchy）。此时 DOM 仍是同一棵树，只是滚动位置变了，
+    // 锚点/选择器按文本查找不受影响（不做坐标点击的页面尤其安全）。
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await adb(['shell', 'input', 'swipe', '800', '1900', '800', '1100', '300'], signal)
+        await new Promise((r) => setTimeout(r, 600))
+        return await dumpOnce(signal)
+      } catch (err) {
+        lastErr = err
+      }
+    }
     throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
   }
 

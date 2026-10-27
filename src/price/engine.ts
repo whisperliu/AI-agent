@@ -153,7 +153,8 @@ export function compare(
   const groups = [...byKey.entries()].map(([key, qs]) => {
     const c = groupComparable(qs)
     if (!c.comparable) note.push(`组「${key}」不可比：${c.reasons.join('；')}`)
-    return { key, comparable: c.comparable, quotes: qs }
+    // 组一律带**统一输入快照 id**（来自本次 conditions，比价的前提，§6.6）。
+    return { key, comparable: c.comparable, snapshotId: conditions.snapshotId, quotes: qs }
   })
 
   // cheapest 只在"单一可比组"内取最小，绝不跨组混排（§6.2 兜底 / §6.4）。
