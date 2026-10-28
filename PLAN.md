@@ -34,7 +34,7 @@
 
 | 项 | 状态 |
 |---|---|
-| 阶段 | **P0–P6 完成 + 双平台真机联跑 ✅**：纯核心 + 插件骨架/异步任务/Mock 全链路（P0/P1）+ 真机通道（P2）+ 美团真机全流程抓价（P3）+ 多平台（饿了么）+ 策略四态 + 谨慎互斥 + 统一输入快照分组（P4）+ **P5 打磨（截图默认脱敏 / 证据 TTL 清理 / 瞬时重试 / 证据绑定）** + **P6 饿了么 canvas OCR 盲导航（真机 PASS ✅）** + **双平台真机联跑（✅ 美团¥49.78 / 饿了么¥13.98；含件数核对、诚实抽取、加购/重试幂等、动画页 dump 解锁）** |
+| 阶段 | **P0–P6 完成 + 双平台真机联跑 ✅ + 双平台同快照「1个可比组，cheapest=美团¥29.88」端到端 PASS（2026-10-28）**：纯核心 + 插件骨架/异步任务/Mock 全链路（P0/P1）+ 真机通道（P2）+ 美团真机全流程抓价（P3）+ 多平台（饿了么）+ 策略四态 + 谨慎互斥 + 统一输入快照分组（P4）+ **P5 打磨（截图默认脱敏 / 证据 TTL 清理 / 瞬时重试 / 证据绑定）** + **P6 饿了么 canvas OCR 盲导航（真机 PASS ✅）** + **双平台真机联跑（✅ 美团¥49.78 / 饿了么¥13.98；含件数核对、诚实抽取、加购/重试幂等、动画页 dump 解锁）** |
 | 代码 | `src/*` 全部模块落地；`price_agent` 异步工具可用（Mock/真机）；P4 新增 `price/strategies.ts`（策略四态+互斥）、`platform/elemeReal.ts`、`platform/settleRows.ts`、`platform/navigator.ts`、`ocr/tesseract.ts`（饿了么 canvas 自绘 → ROI OCR 兜底），并贯通 `snapshotId/hash`；P6 新增 `platform/ocrNav.ts`（OCR 盲导航原语 + canvas 支付红线 `assertOcrTapSafe`）与 `elemeReal.runElemeOcrNav` |
 | 工具链 | TypeScript 5.9 / ESLint 10 / Prettier 3 / `node --test`；`pnpm check` 全绿（**230 tests**，`src/price` 行覆盖 100%（分支 91.44%）） |
 | 文档 | 本套四件（本文 + `docs/` 三件）+ `CHANGELOG.md` |

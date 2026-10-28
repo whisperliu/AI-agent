@@ -14,10 +14,10 @@
 | 模型 | `workbuddy2api/deepseek-v4.1-flash`（经 `dsh-magpie-connect`, baseUrl `127.0.0.1:3425`） |
 | GUI | `http://127.0.0.1:3080`（profile `web`） |
 | 工作目录 | `/home/liuqiaoqiao/dsh-plugin-price-agent` |
-| 时间跨度 | 2026-10-22 08:14 → 2026-10-24 13:35（含跨会话空档） |
+| 时间跨度 | 2026-10-22 08:14 → 2026-10-28 20:59（含跨会话空档） |
 | 起始基线 | P0 已提交（`43d6ea0`），P1 未开始 |
-| 结束状态 | **P1 收工 + P2 真机通道代码完成 + 真机 §8.4 最小实验 PASS（Lenovo TB321FU 无线调试）** |
-| 期间提交 | `970d2fb`（P1）、`d43ac0d`（P1 收尾快照）、`251c4e6`（安全修复）、`e34301c`（P2 真机通道，已提交） |
+| 结束状态 | **真机双平台端到端 PASS：同快照 1 个可比组，cheapest=美团 ¥29.88（饿了么 ¥9.88 medium/需复核）** |
+| 期间提交 | 2026-10-28 本轮 6 次：`8103878` `45214a1` `823c08b` `71c3c2a` `412323f` `02906f7`（main ahead 6，未 push） |
 
 ---
 
@@ -339,6 +339,25 @@
 
 ---
 
+> 以下为 2026-10-28 会话（延续同 id）的轮次记录，接在附录 A **之前**的正文区。
+
+### 轮次 35 · 代码加固 + 真机双平台端到端（2026-10-28 14:22–20:59）✅
+- **本轮人类请求序列**：「继续工作」→（选"代码加固/补测试"）→「真机双平台端到端复跑」→「美团图形验证码你能直接确认吗」→「验证已经通过」→「再跑一次」→「收尾」。
+- **① 代码加固（不碰手机）**：审计发现 `Discount.refundedBy`（§5.3 声明"拆条防重复计数"）**代码从未消费** → `deductibleSavings` 会重复扣拆条优惠、把 `effectivePrice` 压到**低于实际**（幻影低价）。TDD 复现（20 vs 预期 10）后修：只计主条、主条缺失时从条保守计入。并补齐 `src/price` 未覆盖分支单测，**行覆盖 97.15%→100%、分支 86%→91.4%**。提交 `8103878`。
+- **② 真机双平台复跑，挖出并修 3 类自动化缺陷**（提交 `45214a1`、`823c08b`）：
+  1. **两平台都"点第一个菜"→ 选错菜**（美团菜单第一个菜/饿了么首卡常非查询词）→ 新增 `dishMatchScore`（精确1.0/包含0.92/尾噪容错0.93）+ `findDishAddTarget`/`locateElemeDishAddTarget`/`locateElemeGridAddTarget`，**按目标菜名选**；匹配不到→`NeedsHumanError`（不乱点近名菜）。关键：`小炒田螺肉` vs `小炒肉` itemScore=0.90，故阈值 0.92。
+  2. **美团缺空车守卫 + 重试重复加购**（真机 ×3）→ `assertMeituanCartEmpty`（只认「已添加 N 件(N>0)」）+ `idempotentEnter=false`；顺带修美团店名被 `x1`/角标污染。
+  3. **饿了么网格卡片布局**（无「选规格」，加购是价格行右缘橙色 ⊕，OCR 读不到、多菜挤一行）→ 按 x 间隔**切列卡片**，⊕=菜名起点+(437,159)（真机 ⊕ 中心 477/1001/1523@2005 与推导吻合）；**单平台真机 PASS ¥9.88**。
+- **③ 跨平台"同菜"分组修复**（提交 `71c3c2a`、`412323f`）：两平台都读到正确价却拆 2 组（`cheapest=null`）。根因：规格表述差异（美团"1人份，微辣"/饿了么"微辣"）+ 饿了么结算页菜名 OCR 读花（"小炒内木情所Y"）。修：`canonicalSpec` 规格归一（只去"N人份"，保留大/小份真实差异）+ 结算页菜名糊时回填**加购时已核对命中**的菜名（有据非伪造）。
+- **④ 真机双平台端到端 PASS**（提交 `02906f7`）：风控冷却后跑通——**同快照 `snap-97ebe7d61a61`，1 个可比组**：饿了么 `¥9.88`（medium/需复核/delta=0）、美团 `¥29.88`（high/免复核/delta=0），**`cheapest=美团 ¥29.88`**（只取可信最低价）。最后一修：饿了么进店偶落"为你找到"推荐区需 ~3 次回顶 → 温和回顶 2→5 次（命中即停）。
+- **验证**：`pnpm check` **230/230 全绿**，`src/price` 行覆盖 **100%**/分支 91.44%。
+- **红线**：全程只读；未点提交/支付；**验证码（美团字序/滑块、饿了么滑块）一律即停、零识别零绕过，由用户本人过**；清车仅删自动化自己加的测试菜（逐屏核对，用户商品未动）。
+- **状态**：`ok(真机双平台同快照→分组→选出可信最低价 端到端 PASS)`
+
+---
+
+---
+
 ## 附录 A · 机器可读元数据（JSON）
 
 ```json
@@ -351,9 +370,9 @@
     "cwd": "/home/liuqiaoqiao/dsh-plugin-price-agent",
     "tz": "Asia/Shanghai",
     "start": "2026-10-22T08:14:19+08:00",
-    "end": "2026-10-27T19:10:00+08:00",
+    "end": "2026-10-28T20:59:28+08:00",
     "baseline_commit": "43d6ea0",
-    "final_commit": "2672cf1（P6 真机 PASS + 双平台联跑 8 项修复；本轮共 5 次提交）"
+    "final_commit": "02906f7（真机双平台同快照→1可比组→cheapest=美团¥29.88 PASS；2026-10-28 本轮共 6 次提交：8103878/45214a1/823c08b/71c3c2a/412323f/02906f7；main ahead 6 未 push）"
   },
   "turns": [
     {
@@ -661,6 +680,60 @@
       "result": "7次联跑逐个挖出并修 8 个真缺陷:①购物车跨任务累积(静默错价,多件费用x多件实付亦自洽)②饿了么伪造storeName/itemName=cond.item(静默错价)③两道菜各x1只取单行(静默错价)④内外两层重试相乘重复加购⑤默认规格不弹窗⑥动画页dump永不idle⑦waitFor零重试/isCartBar结构信号⑧QuoteGroup缺snapshotId+canvas截图不脱敏落盘",
       "verify": "真机 美团¥49.78(delta=0,high)/饿了么¥13.98(delta=0);脏数据判不可比+needsConfirm+cheapest只取可信;pnpm check 204/204(+12)",
       "status": "ok(双平台联跑可用;宁可不给结论也不给错价)"
+    },
+    {
+      "n": 35,
+      "at": "10-28 14:22",
+      "user": "继续工作 → 选「代码加固/补测试」",
+      "intent": "price 纯核心加固 + 补未覆盖分支单测",
+      "result": "审计发现 Discount.refundedBy 声明但 deductibleSavings 从未消费→拆条优惠重复扣→effectivePrice 幻影低价;TDD复现(20 vs 10)后修只计主条;补 price 未覆盖分支",
+      "verify": "pnpm check 218/218;src/price 行覆盖 97.15%→100%,分支 86%→91.4%",
+      "status": "ok"
+    },
+    {
+      "n": 36,
+      "at": "10-28 14:33",
+      "user": "真机双平台端到端复跑",
+      "intent": "真机复跑美团+饿了么同快照对比",
+      "result": "两平台都读到正确价却各自选错菜/重复加购;定位 3 类缺陷:①两平台都点第一个菜②美团缺空车守卫+重试重复加购③饿了么网格卡片无选规格⊕加购",
+      "verify": "真机多轮;均balanced;但不可比(选错菜/件数)",
+      "status": "partial(定位缺陷)"
+    },
+    {
+      "n": 37,
+      "at": "10-28 15:00",
+      "user": "（选）先修 A+B 再上真机复跑",
+      "intent": "修按目标菜名选规格+美团空车守卫/非幂等+饿了么网格⊕",
+      "result": "dishMatchScore/findDishAddTarget/locateElemeGridAddTarget 按菜名选;美团 assertMeituanCartEmpty+idempotentEnter=false;饿了么网格按列切卡⊕=菜名+(437,159)",
+      "verify": "pnpm check 227/227;饿了么单平台真机 PASS ¥9.88 delta=0",
+      "status": "ok(饿了么网格单平台真机 PASS)"
+    },
+    {
+      "n": 38,
+      "at": "10-28 16:04",
+      "user": "美团图形验证码你能直接确认吗",
+      "intent": "询问能否代为过验证码",
+      "result": "拒绝:验证码是安全红线(AGENTS§0),不识别/不点/不绕过;给出用户本人过/手动到结算页短路/换时机等合法做法",
+      "verify": "—",
+      "status": "ok(守红线)"
+    },
+    {
+      "n": 39,
+      "at": "10-28 16:04→20:15",
+      "user": "验证已经通过 / 再跑一次",
+      "intent": "过验证码后跑双平台对比",
+      "result": "跨平台同菜被拆2组(cheapest=null):规格表述差异+饿了么菜名OCR读花→canonicalSpec规格归一+结算页菜名回填(加购已核对);饿了么定位回顶次数调优(点餐/评价吸顶误判→温和回顶2→5次命中即停);期间两平台均触发验证码即停、多次清测试菜",
+      "verify": "真机第3次PASS:同快照1个可比组,饿了么¥9.88(medium)/美团¥29.88(high),cheapest=美团¥29.88;pnpm check 230/230",
+      "status": "ok(真机双平台端到端 PASS)"
+    },
+    {
+      "n": 40,
+      "at": "10-28 20:59",
+      "user": "收尾",
+      "intent": "收尾:门禁核对+会话快照+CHANGELOG",
+      "result": "门禁230/230绿,工作树干净(ahead 6未push),补轮次35-39与本快照",
+      "verify": "pnpm check 230/230",
+      "status": "ok"
     }
   ],
   "fixes": [
@@ -778,6 +851,31 @@
       "topic": "分组缺 snapshotId / canvas 截图不脱敏",
       "file": "src/price/{model,engine}.ts+src/device/redact.ts",
       "detail": "QuoteGroup 无 snapshotId→双平台无法追溯,补上;canvas 页无dump XML→截图永不脱敏落盘→新增 sensitiveOcrRects 按OCR bbox脱敏(仍坚持无法确认脱敏则不落原图)"
+    },
+    {
+      "topic": "refundedBy 拆条重复计数(幻影低价)",
+      "file": "src/price/schema.ts",
+      "detail": "Discount.refundedBy 声明防重复但 deductibleSavings 从未消费→拆条优惠重复扣→effectivePrice 低于实际;修为只计主条/主条缺失时从条保守计入"
+    },
+    {
+      "topic": "两平台点第一个菜→选错菜(静默错价)",
+      "file": "src/platform/{settleRows,meituanReal,elemeReal}.ts",
+      "detail": "加购不按目标菜名;新增 dishMatchScore(精确1.0/包含0.92/尾噪0.93)+findDishAddTarget/locateElemeDishAddTarget,匹配不到→NeedsHumanError 不乱点近名菜;小炒田螺肉itemScore=0.90故阈值0.92"
+    },
+    {
+      "topic": "美团缺空车守卫+重试重复加购",
+      "file": "src/platform/{meituanReal,meituan}.ts",
+      "detail": "assertMeituanCartEmpty(只认已添加N件N>0,不用去结算以免失效残留误判)+idempotentEnter=false;店名抽取排除x1/角标"
+    },
+    {
+      "topic": "饿了么网格卡片无选规格(⊕加购)",
+      "file": "src/platform/elemeReal.ts",
+      "detail": "多列网格⊕(OCR读不到,多菜挤一行);locateElemeGridAddTarget 按x间隔切列卡片,⊕=菜名起点+(437,159);温和回顶2→5次(点餐/评价吸顶误判到顶);确认按钮跨布局2432/2462"
+    },
+    {
+      "topic": "跨平台同菜被拆组(cheapest=null)",
+      "file": "src/price/{similarity,engine}.ts+src/platform/{types,elemeReal}.ts",
+      "detail": "规格表述差异(1人份,微辣 vs 微辣)+饿了么结算页菜名OCR读花;canonicalSpec规格归一(只去N人份,保留大小份)+结算页菜名糊时回填加购已核对菜名(verifiedItemName,有据非伪造)"
     }
   ],
   "deliverables": [
@@ -797,19 +895,22 @@
     "src/platform/selectors/eleme.ts",
     "src/device/{adb,redact}.ts",
     "src/task/runner.ts",
-    "test/{ocrNavFlow,device-p2,platform-p3,pricing.engine,redact}.test.ts",
+    "test/{ocrNavFlow,device-p2,platform-p3,pricing.engine,redact,similarity,schema}.test.ts",
+    "test/fixtures/eleme-grid.real-ocr.json",
     "docs/conversation-log.md",
-    "CHANGELOG.md[19]-[50]"
+    "CHANGELOG.md[19]-[55]"
   ]
 }
 ```
 
 ---
 
-*会话快照：2026-10-27 19:10 · 分支 `main`（=`origin/main`=`2672cf1`，工作区干净）*
-*本轮（2026-10-27）承接上一会话，把 **P6 饿了么 canvas OCR 盲导航从"代码就绪"推到"真机端到端 PASS"**，并完成**双平台真机联跑**、在过程中挖出并修复 **8 个真实缺陷**（其中 3 个是**静默错价**风险：购物车跨任务累积、「两道菜各 x1」单行取数、饿了么伪造商品名）。*
-*- **P6 真机 PASS**：`payable=¥13.98`、`confidence=medium`、`delta=0.00` 完美平账，与结算页「立即支付 ¥13.98」一致（87.6s 全自动：首页→搜索→选店→选规格→加购→去结算→读实付）。*
-*- **双平台联跑**：美团 `¥49.78`（`delta=0`、`confidence=high`、`needsConfirm=false`）/ 饿了么 `¥13.98`（`delta=0`）；脏数据（购物车残留、串品）时系统**判不可比 + `needsConfirm` + `cheapest` 只取可信者** —— **宁可不给结论，也绝不给错价**。*
-*- **门禁**：`pnpm check` **204/204 全绿**（本轮 +12 回归）；`src/price` 行覆盖 97.15%。*
-*- **红线**：全程只读；未点任何提交/支付；美团字序验证码**立即停、零识别零绕过**；调试仅清空自动化自己加进购物车的测试菜品（用户商品一件未动，逐屏核对）；仓内仅脱敏 fixture。*
-*- **待人工**：美团页面的字序验证码需用户本人通过。*
+*会话快照：2026-10-28 20:59 · 分支 `main`（`origin/main`=`0a927e9`，本地 ahead 6，**未 push**；工作区干净）*
+*本轮（2026-10-28）从"代码加固"一路推到 **真机双平台端到端跑通**：先修了 `refundedBy` 拆条重复计数（幻影低价），再上真机复跑，挖出并修 3 类自动化缺陷（选第一个菜/空车误判/网格⊕），修好跨平台"同菜"分组（规格归一+菜名回填），最终 **同快照 1 个可比组、`cheapest=美团 ¥29.88`**。*
+*- **代码加固**：`deductibleSavings` 消费 `refundedBy`（拆条只计主条）；`src/price` 行覆盖 97.15%→**100%**、分支 86%→**91.4%**。*
+*- **按目标菜名选规格（两平台）**：`dishMatchScore`(精确1.0/包含0.92/尾噪0.93) + 网格卡片 `locateElemeGridAddTarget`(⊕=菜名+(437,159))；匹配不到即交人工，绝不再乱点近名菜。*
+*- **跨平台同菜合并**：`canonicalSpec` 规格归一（美团"1人份，微辣"↔饿了么"微辣"）+ 结算页菜名 OCR 糊时回填加购已核对菜名。*
+*- **真机双平台 PASS**：同快照 `snap-97ebe7d61a61`、`江西小炒·小炒肉木桶饭 微辣` —— 饿了么 **¥9.88**(medium/需复核/delta=0)、美团 **¥29.88**(high/免复核/delta=0)，**1 个可比组、`cheapest=美团 ¥29.88`**（只取可信最低价；饿了么更低但 OCR 需复核）。*
+*- **门禁**：`pnpm check` **230/230 全绿**；`src/price` 行覆盖 100%/分支 91.44%。*
+*- **红线**：全程只读；未点提交/支付；**美团字序/滑块、饿了么滑块验证码一律即停、零识别零绕过，由用户本人过**；清车仅删自动化自己加的测试菜（逐屏核对，用户商品未动）；仓内仅脱敏 fixture。*
+*- **提交（2026-10-28 本轮 6 次，未 push）**：`8103878` `45214a1` `823c08b` `71c3c2a` `412323f` `02906f7`。*

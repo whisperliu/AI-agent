@@ -8,7 +8,7 @@ DSH 插件：在你自己的 Android 手机上打开外卖 App（美团 / 饿了
 
 ## 状态
 
-**P0–P6 完成**：纯核心 + 插件骨架/异步任务/Mock 全链路（P0/P1）→ 真机通道（P2）→ 美团真机全流程抓价（P3）→ 多平台（饿了么）+ 策略四态 + 谨慎互斥 + 统一输入快照分组（P4）→ **P5 打磨**（截图默认脱敏、证据 TTL/保留清理、瞬时异常重试、证据真实绑定、无线调试 mDNS 自动回连）→ **P6 饿了么 canvas OCR 盲导航（真机端到端 PASS ✅）**：`platform/ocrNav.ts`（截图→OCR 逐词→按文案/坐标盲点；canvas 支付红线 `assertOcrTapSafe`；慢设备动态预算 + ROI 加速）+ `elemeReal.runElemeOcrNav`（拼单页守卫、**加购跨重试幂等**）；2026-10-27 真机实测 `payable=¥13.98`、`delta=0` 平账。`pnpm check` 全绿（**230 tests**，`src/price` 行覆盖 100%（分支 91.44%））。
+**P0–P6 完成**：纯核心 + 插件骨架/异步任务/Mock 全链路（P0/P1）→ 真机通道（P2）→ 美团真机全流程抓价（P3）→ 多平台（饿了么）+ 策略四态 + 谨慎互斥 + 统一输入快照分组（P4）→ **P5 打磨**（截图默认脱敏、证据 TTL/保留清理、瞬时异常重试、证据真实绑定、无线调试 mDNS 自动回连）→ **P6 饿了么 canvas OCR 盲导航（真机端到端 PASS ✅）**：`platform/ocrNav.ts`（截图→OCR 逐词→按文案/坐标盲点；canvas 支付红线 `assertOcrTapSafe`；慢设备动态预算 + ROI 加速）+ `elemeReal.runElemeOcrNav`（拼单页守卫、**加购跨重试幂等**）；2026-10-27 真机实测 `payable=¥13.98`、`delta=0` 平账。**2026-10-28 真机双平台端到端 PASS**：同快照（江西小炒·小炒肉木桶饭 微辣）合并为 **1 个可比组**——美团 `¥29.88`(high/免复核)、饿了么 `¥9.88`(medium/需复核)，`cheapest = 美团 ¥29.88`（只取可信最低价）；期间修 `refundedBy` 拆条重复计数、按目标菜名选规格、饿了么网格⊕加购、跨平台同菜分组（规格归一+菜名回填）。`pnpm check` 全绿（**230 tests**，`src/price` 行覆盖 100%（分支 91.44%））。
 
 文档：总纲 [PLAN.md](./PLAN.md) · 模块规范 [docs/module-spec.md](./docs/module-spec.md) · **每模块说明 [docs/modules/](./docs/modules/README.md)** · 任务与验收 [docs/tasks.md](./docs/tasks.md) · 决策 [docs/decisions.md](./docs/decisions.md) · 变更 [CHANGELOG.md](./CHANGELOG.md)。
 
