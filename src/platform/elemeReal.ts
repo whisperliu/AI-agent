@@ -974,26 +974,27 @@ export async function runElemeOcrOnce(
     const findIn = (ws: OcrWord[]) =>
       locateElemeDishAddTarget(ws, cond.item) ?? locateElemeGridAddTarget(ws, cond.item)
     // 4.7) 等菜品网格**真正渲染**：进店后菜品区先空白约 1–2s 再出网格（含"热销"横排）。
-    //      仅当当前帧**还没有任何价格**时才补等，最多 8s（帧已就绪则不额外等待，保证离线回放不漂移）。
+    //      进店（已 force-stop 重启→搜索→首店）本就在**顶部**，故**不做激进回顶**——此前 4 次上滑会把
+    //      目标行（y≈1869/2005）滑过顶部弄丢（真机实测进店即命中 grid=(478,2005)，上滑反而丢失）。
+    //      先直接定位；不命中则多等几帧渲染（每帧 OCR ~6s，最多 3 次）再定位。
     let dishBtn = findIn(words)
-    for (let i = 0; i < 8 && !dishBtn && !/¥\s*\d/.test(allText(words)); i++) {
-      await sleep(1000)
+    for (let i = 0; i < 3 && !dishBtn; i++) {
+      await sleep(800)
       words = await nav.look()
       dishBtn = findIn(words)
     }
-    // 4.8) **无条件强回顶**：进店常停在上次浏览的品类页，而目标菜常在**顶部热销轮播**，需先回顶。
-    //      注意：**不能**用"点餐/评价"判到顶——它们是**吸顶常驻**的，品类页也命中会误判"已在顶部"。
-    //      故直接向下滑动 4 次（真机实测足以到顶），每次后重新定位（滚动后坐标失效）。
-    for (let i = 0; i < 4 && !dishBtn; i++) {
-      await nav.swipe(800, 1000, 800, 2100, 220) // 向下滑 = 回顶部
+    // 4.8) 仍不命中 → 多次**温和**上滑回顶（进店偶发停在"为你找到"推荐区，需 ~3 次才到顶部热销网格）；
+    //      每次上滑后重定位，**命中即停**（不会越过目标）。最多 5 次。
+    for (let i = 0; i < 5 && !dishBtn; i++) {
+      await nav.swipe(800, 1100, 800, 1800, 250)
       await sleep(700)
       words = await nav.look()
       dishBtn = findIn(words)
     }
-    // 4.9) 顶部仍无 → 向下逐屏找（目标也可能在下方品类列表），最多 4 屏。
+    // 4.9) 仍无 → 向下逐屏找（目标也可能在下方品类列表），最多 4 屏。
     for (let i = 0; i < 4 && !dishBtn; i++) {
       await nav.swipe(800, 1700, 800, 900, 350)
-      await sleep(1200)
+      await sleep(1000)
       words = await nav.look()
       dishBtn = findIn(words)
     }
