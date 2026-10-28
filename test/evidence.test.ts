@@ -35,3 +35,10 @@ test('evidenceGap: explains missing evidence', () => {
 test('remainingMs is positive before expiry', () => {
   assert.ok(remainingMs(evidence(), NOW) > 0)
 })
+
+test('isExpired / remainingMs accept Date as now (both code paths)', () => {
+  const nowDate = new Date(NOW)
+  assert.equal(isExpired(evidence(), nowDate), false)
+  assert.equal(isExpired(evidence({ validUntil: '2026-10-22T11:00:00+08:00' }), nowDate), true)
+  assert.ok(remainingMs(evidence(), nowDate) > 0)
+})

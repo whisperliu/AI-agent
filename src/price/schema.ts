@@ -117,25 +117,35 @@ export function expectedPayable(input: {
   return round2(gross - auto)
 }
 
-/** effectivePrice 应扣的优惠：verified 且 sourceOfTruth=settle_screenshot 且未含在 payable。 */
+/**
+ * effectivePrice 应扣的优惠：verified 且 sourceOfTruth=settle_screenshot 且未含在 payable。
+ *
+ * 防重复计数（§5.3）：同一笔优惠可能被 App **拆成多条展示**，从条的 `refundedBy` 指向主条 `id`。
+ * 若主条已在本次可扣集合中，则从条**不得重复计入**（否则 effectivePrice 被压到低于实际 = 幻影优惠）。
+ * 仅当主条不在可扣集合里（如主条已含在 payable / 数据缺失）时，从条才作为唯一可见凭证计入（保守，不静默丢优惠）。
+ */
 export function deductibleSavings(
   savings: {
+    id?: string
     amount: number
     availability: string
     sourceOfTruth?: string
     alreadyIncludedInPayable: boolean
+    refundedBy?: string
   }[],
 ): number {
-  return round2(
-    savings
-      .filter(
-        (s) =>
-          s.availability === 'verified' &&
-          (s.sourceOfTruth === undefined || s.sourceOfTruth === 'settle_screenshot') &&
-          !s.alreadyIncludedInPayable,
-      )
-      .reduce((sum, s) => sum + s.amount, 0),
+  const eligible = savings.filter(
+    (s) =>
+      s.availability === 'verified' &&
+      (s.sourceOfTruth === undefined || s.sourceOfTruth === 'settle_screenshot') &&
+      !s.alreadyIncludedInPayable,
   )
+  // 本次真正会被计入的"主条"id（自身不是从条）。
+  const masterIds = new Set(
+    eligible.filter((s) => !s.refundedBy && s.id).map((s) => s.id as string),
+  )
+  const counted = eligible.filter((s) => !(s.refundedBy && masterIds.has(s.refundedBy)))
+  return round2(counted.reduce((sum, s) => sum + s.amount, 0))
 }
 
 export function round2(n: number): number {

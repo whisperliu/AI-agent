@@ -242,3 +242,65 @@ test('分组结果带统一输入快照 id（双平台对比可追溯，§6.6）
   assert.equal(r2.groups.length, 1)
   assert.equal(r2.groups[0]?.snapshotId, 'snap-abc123')
 })
+
+/** 构造"低可信"草稿：费用全来自 OCR → 置信度被压到 medium → needsConfirm=true（账仍平）。 */
+function ocrDraft(over: Partial<QuoteDraft> = {}): QuoteDraft {
+  return draft({
+    fees: [
+      { kind: 'goods', label: '商品', amount: 28.9, source: 'ocr' },
+      { kind: 'delivery', label: '配送费', amount: 2, source: 'ocr' },
+      { kind: 'packing', label: '打包费', amount: 1, source: 'ocr' },
+    ],
+    ...over,
+  })
+}
+
+test('compare: 组内全部 needsConfirm → cheapest=null + 「无可信结果」提示', () => {
+  const m = priceQuote(ocrDraft({ platform: 'meituan' }))
+  const e = priceQuote(ocrDraft({ platform: 'eleme' }))
+  const r = compare([m, e], cond(), { taskId: 't-nc', now: NOW })
+  assert.equal(r.groups.length, 1)
+  assert.equal(r.groups[0]?.comparable, true)
+  assert.equal(r.cheapest, null)
+  assert.match(r.note.join('\n'), /无可信结果/)
+})
+
+test('compare: 组内全部过期 → cheapest=null + 「证据已过期」提示', () => {
+  const past = { validUntil: '2026-10-22T11:00:00+08:00' } // NOW 之前 → 过期
+  const m = priceQuote(draft({ platform: 'meituan', evidence: evidence(past) }))
+  const e = priceQuote(draft({ platform: 'eleme', evidence: evidence(past) }))
+  const r = compare([m, e], cond(), { taskId: 't-exp', now: NOW })
+  assert.equal(r.groups[0]?.comparable, true)
+  assert.equal(r.cheapest, null)
+  assert.match(r.note.join('\n'), /证据已过期/)
+})
+
+test('compare: 既非全 needsConfirm 也非全过期（混合）→ 「无可信且未过期」提示', () => {
+  // A：OCR → needsConfirm 但证据新鲜；B：树可信但证据过期。
+  const a = priceQuote(ocrDraft({ platform: 'meituan' }))
+  const b = priceQuote(
+    draft({ platform: 'eleme', evidence: evidence({ validUntil: '2026-10-22T11:00:00+08:00' }) }),
+  )
+  const r = compare([a, b], cond(), { taskId: 't-mix', now: NOW })
+  assert.equal(r.cheapest, null)
+  const note = r.note.join('\n')
+  assert.match(note, /无可信且未过期/)
+  assert.doesNotMatch(note, /无可信结果/)
+  assert.doesNotMatch(note, /证据已过期，请重新核价/)
+})
+
+test('priceQuote: 拆条优惠(refundedBy) 只扣主条 —— effectivePrice 不被压成幻影低价', () => {
+  // 同一笔招行立减被拆成两条展示：主条 10 + 从条 10(refundedBy=主条)。
+  // 旧实现会扣 20 → effectivePrice=6.9（远低于真实到手价），是"静默低报"。
+  const q = priceQuote(
+    draft({
+      payable: 26.9,
+      optionalSavings: [
+        verifiedSaving({ id: 'cmb', amount: 10 }),
+        verifiedSaving({ id: 'cmb-sub', amount: 10, refundedBy: 'cmb' }),
+      ],
+    }),
+  )
+  assert.equal(q.payable, 26.9)
+  assert.equal(q.effectivePrice, 16.9) // 只扣一次 10
+})

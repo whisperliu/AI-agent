@@ -9,6 +9,7 @@ import {
   deductibleSavings,
   QuoteSchema,
   safeValidateQuote,
+  validateQuote,
 } from '../src/price/schema.ts'
 import { draft } from './helpers.ts'
 
@@ -100,4 +101,53 @@ test('deductibleSavings only counts verified + not-included + settle_screenshot'
 
 test('QuoteSchema is exported and parses directly', () => {
   assert.equal(typeof QuoteSchema.parse, 'function')
+})
+
+test('deductibleSavings: refundedBy 拆条只计主条，防止重复计数（真·防虚低价）', () => {
+  // 同一笔招行立减被 App 拆成两条展示：主条 cmb(10) + 从条 cmb-sub(10, refundedBy=cmb)。
+  // 若不识别 refundedBy，会重复扣 20 → effectivePrice 被压到低于实际（幻影优惠）。
+  const handled = deductibleSavings([
+    {
+      id: 'cmb',
+      amount: 10,
+      availability: 'verified',
+      sourceOfTruth: 'settle_screenshot',
+      alreadyIncludedInPayable: false,
+    },
+    {
+      id: 'cmb-sub',
+      amount: 10,
+      availability: 'verified',
+      sourceOfTruth: 'settle_screenshot',
+      alreadyIncludedInPayable: false,
+      refundedBy: 'cmb', // 从条：指向主优惠，不得重复计数
+    },
+  ])
+  assert.equal(handled, 10)
+})
+
+test('deductibleSavings: refundedBy 指向不在列表里时仍保守计入该条（不静默丢优惠）', () => {
+  const total = deductibleSavings([
+    {
+      id: 'x-sub',
+      amount: 6,
+      availability: 'verified',
+      sourceOfTruth: 'settle_screenshot',
+      alreadyIncludedInPayable: false,
+      refundedBy: 'missing-master',
+    },
+  ])
+  assert.equal(total, 6)
+})
+
+test('validateQuote throws ZodError on an invalid quote (strict entrypoint)', () => {
+  assert.throws(() => validateQuote({ platform: 'meituan' }), /invalid|required|expected/i)
+})
+
+test('schema catches a lying arithmetic.expected (self-reported mismatch)', () => {
+  const q = priceQuote(draft())
+  const bad = { ...q, arithmetic: { ...q.arithmetic, expected: q.arithmetic.expected + 5 } }
+  const r = safeValidateQuote(bad)
+  assert.equal(r.success, false)
+  assert.match(JSON.stringify(r.error?.issues), /arithmetic\.expected/)
 })

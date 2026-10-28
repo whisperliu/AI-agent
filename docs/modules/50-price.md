@@ -13,6 +13,7 @@
 
 ## 实现要点（特有）
 - **双口径**：`payable`（纯事实，不再叠加）与 `effectivePrice = payable − Σ(verified && !alreadyIncludedInPayable)`（§5.3）；`superRefine` 强制该式（防重复扣）。
+- **拆条防重（§5.3 `refundedBy`）**：同一笔优惠被 App 拆成多条展示时，从条的 `refundedBy` 指向主条 `id`；`deductibleSavings` **只计主条**——只有主条不在可扣集合里（如已含在 payable / 数据缺失）时，从条才作为唯一可见凭证计入（保守，既不重复扣、也不静默丢优惠）。
 - **四态**：`verified/presumed/known_unavailable/unknown`；只有 `settle_screenshot` 可升 `verified`；`presumed` 只能提示（§5.4）。
 - **额度不假精确**：额度字段只用于"排除已知不可用"，**不得断言可用**（§5.5）。
 - **两层校验分离**：`arithmetic`（账平）≠ `extraction`（读得准）；`price/*` 不判定 OCR 质量，只消费其结论（§6.3/§6.3.4）。
@@ -30,6 +31,7 @@
 - 证据 TTL：§6.5
 
 ## 测试（P0 主战场）
-- `pricing.engine.test.ts`：`¥28.9/¥289`、双错平账、重复扣、推测当可用、不可比分组。
-- `schema.test.ts`：`addIssue` 用 `message`、`.refine` 用 `error`。
-- `similarity.test.ts`：烤鸭饭 vs 烤鸭饭+可乐 → 不可比。
+- `pricing.engine.test.ts`：`¥28.9/¥289`、双错平账、重复扣、推测当可用、不可比分组；`compare` 三条 `cheapest=null` 提示分支（无可信/已过期/无可信且未过期）；拆条 `refundedBy` 只扣主条。
+- `schema.test.ts`：`addIssue` 用 `message`、`.refine` 用 `error`；`refundedBy` 防重复计数（主条在列表→从条不计；主条缺失→从条保守计入）；`validateQuote` 严格入口；`arithmetic.expected` 自报不符被拒。
+- `similarity.test.ts`：烤鸭饭 vs 烤鸭饭+可乐 → 不可比；规格/数量差异；`storeScore` 无 amapId 走名称 Jaccard、近距离(<200m)加成、远距离不加成；`itemScore` 中文按字 / 拉丁按词。
+- 当前：`src/price` 行覆盖 **100%**、分支 ≥ 91%；`pnpm check` **218 tests** 全绿。

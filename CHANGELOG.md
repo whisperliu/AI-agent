@@ -692,6 +692,24 @@
 
 ---
 
+### [51] 2026-10-28 14:35 · fix(price): `refundedBy` 拆条优惠不再重复计数（补一处"静默低报"幻影低价）+ 补齐 price 未覆盖分支单测
+
+- **为什么**：本轮选"代码加固/补测试"（不碰手机）。审计发现一个**规范已写、代码未落地**的潜在缺陷：`model.ts`/`schema.ts` 里声明了 `Discount.refundedBy`（§5.3：「若同一笔优惠被拆成多条展示，指向主优惠 id，避免重复计数」），但 `deductibleSavings()` **从未消费它**。当 App 把一笔立减拆成两条展示时会被**重复扣** → `effectivePrice` 被压到**低于实际到手价**（幻影优惠），正属本仓最忌的"静默错价"类（此处为**低报**方向）。实测复现：主条 10 + 从条 10(refundedBy=主条) → 旧实现扣 20（应为 10）。
+- **做了什么**：
+  1. **先复现后修（TDD）**：`test/schema.test.ts` 加失败用例（实测 `20 !== 10`）→ 再改 `src/price/schema.ts` 的 `deductibleSavings`：先筛出"可扣（verified && settle_screenshot && !alreadyIncluded）"，再取其中**主条（自身无 refundedBy）id 集合**，最后**跳过 refundedBy 命中该主条的从条**；仅当主条不在可扣集合里（如已含 payable/数据缺失）时从条才作为唯一可见凭证计入（保守，不静默丢优惠）。参数类型补 `id?`/`refundedBy?`。
+  2. **补 price 未覆盖分支单测**（`src/price` 必带单测、行覆盖≥90% DoD）：
+     - `schema.test.ts`：`refundedBy` 拆条只计主条 / 主条缺失时从条保守计入 / `validateQuote` 严格入口抛错 / `arithmetic.expected` 自报不符被拒。
+     - `pricing.engine.test.ts`：`compare` 三条 `cheapest=null` 提示分支（全 `needsConfirm`→"无可信结果"｜全过期→"证据已过期"｜混合→"无可信且未过期"）；`priceQuote` 端到端验证拆条只扣主条（26.9→16.9，而非 6.9）。
+     - `similarity.test.ts`：`isSameMeal` 规格不同→`spec differs`；`storeScore` 无 amapId 走名称 Jaccard、近距离(<200m)+0.1 加成、≥200m 不加成；`itemScore` 中文按单字 / 拉丁按整词切分。
+     - `evidence.test.ts`：`isExpired`/`remainingMs` 的 `Date` 入参路径。
+- **改动文件**：`src/price/schema.ts`（1 处函数）、`test/{schema,pricing.engine,similarity,evidence}.test.ts`（新增 14 例），`docs/modules/50-price.md`（实现要点+测试清单），`README.md`/`PLAN.md`（测试数 203→218、覆盖 97.15%→100%）。
+- **验证方式**：`pnpm check` **218/218 全绿**（原 204 + 14）；`pnpm test:coverage` → `src/price` **行 100% / 分支 91.44% / 函数 100%**（schema.ts 分支 100%）。
+- **是否影响已有行为**：**不改变**任何正常路径（无 `refundedBy` 的优惠照常计算）；仅在"同一笔优惠被拆条展示"时由**重复扣**改为**只扣一次**——更保守、更接近真实到手价，符合红线。
+- **红线**：纯 `src/price` 纯核心改动，无 IO、无设备、无下单/支付路径。
+
+---
+
+
 ---
 
 ## 追加条目的模板（供后续每轮使用）
@@ -707,4 +725,4 @@
 
 ---
 
-*最后更新：2026-10-27 18:35 +08:00*
+*最后更新：2026-10-28 14:38 +08:00*
