@@ -23,6 +23,10 @@ export const meituan: PlatformStrategy = {
   id: 'meituan',
   appId: 'com.sankuai.meituan',
   settleAnchor: SETTLE_ANCHOR,
+  // 美团真机链路含**加购副作用**（非幂等）。若被 runner 外层 `withRetry` 整条重跑，会在已有购物车上
+  // 再加一件（真机实测 ×3）→ payable 变成多件总额而算术自洽 → 静默错价。故声明非幂等，交由 runner
+  // 跳过外层重试（美团内部"去结算"已自带 3 次点按重试，足够覆盖偶发点不中）。
+  idempotentEnter: false,
   selectors: GENERIC_SETTLE_SELECTORS,
   async enterSettlePage(driver: Driver, cond: ComparisonConditions): Promise<RawQuoteFacts> {
     if (isRealDevice(driver)) {

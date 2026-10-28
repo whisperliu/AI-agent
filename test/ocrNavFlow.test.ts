@@ -85,7 +85,12 @@ test('OCR 盲导航全流程：首页→搜索→选店→选规格→去结算�
   const HOME = [w('推荐', 100, 300), w('搜索', 700, 312, 200, 50)]
   const SEARCH = [w('历史搜索', 100, 200), w('搜索', 700, 120)]
   const RESULT = [w('销量', 60, 180), w('木桶饭', 300, 400)]
-  const STORE = [w('点餐', 60, 920), w('¥30.98', 300, 955), w('选规格', 1470, 950, 120, 50)]
+  const STORE = [
+    w('点餐', 60, 920),
+    w('小炒肉木桶饭', 400, 950),
+    w('¥30.98', 300, 955),
+    w('选规格', 1470, 950, 120, 50),
+  ]
   const SPEC = [w('份量', 60, 877), w('辣度', 60, 1107), w('选好了', 800, 2432, 200, 60)]
   const CART = [w('去结算', 1453, 2432, 200, 60)]
   const SETTLE = [
@@ -117,11 +122,11 @@ test('OCR 盲导航全流程：首页→搜索→选店→选规格→去结算�
   assert.deepEqual(rec.taps[0], { x: 800, y: 312 })
   assert.deepEqual(rec.taps[1], { x: 735, y: 128 })
   assert.deepEqual(rec.taps[2], { x: 342, y: 400 })
-  assert.equal(rec.taps[3]!.x, 1490) // 选规格
+  assert.equal(rec.taps[3]!.x, 1530) // 选规格
   assert.deepEqual(rec.taps[4], { x: 800, y: 2432 }) // 选好了
   assert.deepEqual(rec.taps[5], { x: 1453, y: 2432 }) // 去结算
   // 红线：加购（选规格）**只点一次**
-  assert.equal(rec.taps.filter((t) => t.x === 1490).length, 1)
+  assert.equal(rec.taps.filter((t) => t.x === 1530).length, 1)
 })
 
 test('验证码页 → NeedsHumanError 立即上抛，绝不整条重试', async () => {
@@ -148,14 +153,14 @@ test('店铺页是「拼单详情」→ NeedsHumanError 立即上抛（不盲点
   // 4 帧读完即停（首页/搜索/结果/店铺页），没有因 attempts=3 而重跑
   assert.equal(reads(), 4)
   // 拼单页守卫在「选规格」之前触发：没有任何 tapPoint 落在加购按钮上
-  assert.equal(rec.taps.filter((t) => t.x === 1490).length, 0)
+  assert.equal(rec.taps.filter((t) => t.x === 1530).length, 0)
 })
 
 test('瞬时故障（非红线）→ 整条重试，下一次成功即返回', async () => {
   const HOME = [w('推荐', 100, 300)]
   const SEARCH = [w('历史搜索', 100, 200)]
   const RESULT = [w('销量', 60, 180)]
-  const STORE = [w('点餐', 60, 920), w('选规格', 1470, 950, 120, 50)]
+  const STORE = [w('点餐', 60, 920), w('小炒肉木桶饭', 400, 950), w('选规格', 1470, 950, 120, 50)]
   const SPEC = [w('份量', 60, 877), w('选好了', 800, 2432, 200, 60)]
   const CART = [w('去结算', 1453, 2432, 200, 60)]
   const SETTLE = [w('合计', 1100, 2400, 120, 50), w('¥30.98', 1240, 2405, 120, 50)]
@@ -180,7 +185,7 @@ test('红线：整条重试时加购只发生一次（真机曾因重试把同�
   const HOME = [w('推荐', 100, 300)]
   const SEARCH = [w('历史搜索', 100, 200)]
   const RESULT = [w('销量', 60, 180)]
-  const STORE = [w('点餐', 60, 920), w('选规格', 1470, 950, 120, 50)]
+  const STORE = [w('点餐', 60, 920), w('小炒肉木桶饭', 400, 950), w('选规格', 1470, 950, 120, 50)]
   const SPEC = [w('份量', 60, 877), w('选好了', 800, 2432, 200, 60)]
   const CART = [w('去结算', 1453, 2432, 200, 60)]
   const SETTLE = [w('合计', 1100, 2400, 120, 50), w('¥30.98', 1240, 2405, 120, 50)]
@@ -207,7 +212,7 @@ test('红线：整条重试时加购只发生一次（真机曾因重试把同�
   const facts = await runElemeOcrNav(driver, ocr, cond, 2, sleep)
   assert.equal(facts.payable, 30.98)
   // 两轮里「选规格」只点了一次
-  assert.equal(rec.taps.filter((t) => t.x === 1490).length, 1)
+  assert.equal(rec.taps.filter((t) => t.x === 1530).length, 1)
 })
 
 test('waitFor：慢设备单帧吃掉全部预算时，仍至少看 2 帧（真机 OCR 6.2s/帧）', async () => {
@@ -292,7 +297,7 @@ test('红线：购物车非空时拒绝加购（避免多件总额被当单品�
     (e: unknown) => e instanceof NeedsHumanError && /购物车非空/.test(String(e.hint ?? '')),
   )
   // 关键：一次都没点「选规格」（绝不往非空购物车再加）
-  assert.equal(rec.taps.filter((t) => t.x === 1490).length, 0)
+  assert.equal(rec.taps.filter((t) => t.x === 1530).length, 0)
 })
 
 test('runCompare: 非幂等入口平台（饿了么）不被外层重试（避免内外重试相乘导致重复加购）', async () => {
@@ -366,7 +371,7 @@ test('加购：无规格弹窗时按"底部购物车条出现"判定加购成功
   const SEARCH = [w('历史搜索', 100, 200)]
   const RESULT = [w('销量', 60, 180)]
   // 店铺页：空购物车（无券后/合计金额）
-  const STORE = [w('点餐', 60, 920), w('选规格', 1470, 950, 120, 50)]
+  const STORE = [w('点餐', 60, 920), w('小炒肉木桶饭', 400, 950), w('选规格', 1470, 950, 120, 50)]
   // 点「选规格」后**直接加购**：没有规格弹窗，但底部条出现「券后约 ¥13.98」
   const AFTER_ADD = [w('点餐', 60, 920), w('¥13.98', 176, 2432), w('券后约', 300, 2432)]
   const CART = [w('去结算', 1453, 2432, 200, 60), w('券后约', 300, 2432)]
@@ -375,7 +380,7 @@ test('加购：无规格弹窗时按"底部购物车条出现"判定加购成功
   const facts = await runElemeOcrNav(driver, ocr, cond, 1, sleep)
   assert.equal(facts.payable, 13.98)
   // 加购只点一次
-  assert.equal(rec.taps.filter((t) => t.x === 1490).length, 1)
+  assert.equal(rec.taps.filter((t) => t.x === 1530).length, 1)
 })
 
 test('extractElemeSettleFromOcr: OCR 前置噪声与小写误识时仍能取整菜名（不取"木桶饭"碎片）', async () => {
@@ -392,4 +397,56 @@ test('extractElemeSettleFromOcr: OCR 前置噪声与小写误识时仍能取整�
   assert.equal(facts.itemName, '小炒猪肝木桶饭')
   // 店名剥掉"区购…蜂鸟准时达"噪声
   assert.equal(facts.storeName, '江西小炒(盛夏路店)')
+})
+
+// ───────────────────── 2026-10-28：按目标菜名选规格（绝不点第一个/近名菜） ─────────────────────
+
+test('红线：按目标菜名定位「选规格」，跳过位置更靠前但近名的菜（小炒田螺肉 ≠ 小炒肉）', async () => {
+  const HOME = [w('推荐', 100, 300)]
+  const SEARCH = [w('历史搜索', 100, 200)]
+  const RESULT = [w('销量', 60, 180)]
+  // 店铺菜单：第一道是"小炒田螺肉木桶饭"（近名，itemScore≈0.9），目标"小炒肉木桶饭"在下方。
+  const STORE = [
+    w('点餐', 60, 920),
+    w('小炒田螺肉木桶饭', 360, 1000),
+    w('¥35', 300, 1040),
+    w('选规格', 1470, 1000, 120, 50),
+    w('小炒肉木桶饭', 360, 1400),
+    w('¥29.98', 300, 1440),
+    w('选规格', 1470, 1400, 120, 50),
+  ]
+  const SPEC = [w('份量', 60, 877), w('选好了', 800, 2432, 200, 60)]
+  const CART = [w('去结算', 1453, 2432, 200, 60)]
+  const SETTLE = [w('合计', 1100, 2400, 120, 50), w('¥29.98', 1240, 2405, 120, 50)]
+  // STORE 出现两次（店铺页等待 + 点选规格前判定）
+  const { ocr, driver, rec } = makeFake([HOME, SEARCH, RESULT, STORE, STORE, SPEC, CART, SETTLE])
+  const facts = await runElemeOcrNav(driver, ocr, cond, 1, sleep)
+  assert.equal(facts.payable, 29.98)
+  // 关键：点的是 y=1400（小炒肉）那个「选规格」，不是 y=1000（田螺肉）。
+  const specTaps = rec.taps.filter((t) => t.x === 1530)
+  assert.equal(specTaps.length, 1)
+  assert.equal(specTaps[0]!.y, 1425) // 1400+25(按钮中心)，是"小炒肉"行而非"田螺"行(1000→1025)
+})
+
+test('红线：菜单里没有目标菜 → NeedsHumanError（不乱点近名菜、不整条重试）', async () => {
+  const HOME = [w('推荐', 100, 300)]
+  const SEARCH = [w('历史搜索', 100, 200)]
+  const RESULT = [w('销量', 60, 180)]
+  // 只有"小炒田螺肉木桶饭"（近名），没有"小炒肉木桶饭"。
+  const STORE = [
+    w('点餐', 60, 920),
+    w('小炒田螺肉木桶饭', 360, 1000),
+    w('¥35', 300, 1040),
+    w('选规格', 1470, 1000, 120, 50),
+  ]
+  const { ocr, driver, rec, reads } = makeFake([HOME, SEARCH, RESULT, STORE])
+  await assert.rejects(
+    () => runElemeOcrNav(driver, ocr, cond, 3, sleep), // attempts=3 也不该重试
+    (e: unknown) =>
+      e instanceof NeedsHumanError &&
+      /未找到目标菜品/.test(String(e.hint ?? '') + String(e.message ?? '')),
+  )
+  // 没有任何「选规格」点击；4 帧读完即停（非瞬时故障不重试）
+  assert.equal(rec.taps.filter((t) => t.x === 1530).length, 0)
+  assert.equal(reads(), 4)
 })

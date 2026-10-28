@@ -28,6 +28,8 @@ import {
   amountLeftOfAnchor,
   amountNearLabel,
   buildRows,
+  dishMatchScore,
+  DISH_MATCH_MIN,
   parseMoneyText,
   PRICE_ONLY_RE,
   rowText,
@@ -717,6 +719,66 @@ export function locateFirstDishSpecY(words: OcrWord[], fallbackY: number): numbe
 }
 
 /**
+ * 在店铺页 OCR 词里，按**目标菜名**定位其「选规格」按钮（不点第一个菜！）。
+ *
+ * 背景（2026-10-28 真机，静默错价防线）：饿了么此前"点首个菜的选规格"，实测查询「小炒肉木桶饭」
+ * 却连续加购成「小炒猪肝/小炒田螺肉木桶饭」（同一店多个近名菜）。`locateFirstDishSpecY` 只按 y 取首个，
+ * 完全不看菜名。这里改为：对每个「选规格」按钮，配其**同一行/紧邻下方菜名行**的 OCR 文本，
+ * 用 `dishMatchScore` 与 target 判分，只有 ≥ `DISH_MATCH_MIN` 才认命。
+ * 匹配不到（菜单里没这道菜/菜名被读花）→ 返回 undefined，调用方应如实交人工，绝不乱点近名菜。
+ *
+ * 纯函数（无 IO），用真机 OCR 词离线回放测试。
+ */
+export function locateElemeDishAddTarget(
+  words: OcrWord[],
+  target: string,
+): { x: number; y: number; matched: string; score: number } | undefined {
+  const yc = (w: OcrWord) => Math.round(w.bbox.y + w.bbox.h / 2)
+  const priceRe = /[¥￥]\s*\d+(?:\.\d{1,2})?|^\d+\.\d{2}$/
+  const isPrice = (t: string) => priceRe.test(t.replace(/\s/g, ''))
+  const specBtns = words.filter((w) => /^选规格$/.test((w.t || '').trim()) && w.bbox.y > MENU_Y_MIN)
+  if (specBtns.length === 0) return undefined
+  // 菜名候选：排除价格、"选规格"按钮、噪声/促销/门店/规格行。
+  const NOISE =
+    /选规格|加入购物车|去结算|已选|购物车|合计|¥|￥|起送|配送|打包|优惠|红包|月售|起送|分钟|距离|评价|销量|公告|¥/
+  const SPEC_ROW = /份量|辣度|选好了|数量|人份|^\d+$|^[x×]\d+$/i
+  const nameWords = words.filter((w) => {
+    const t = (w.t || '').replace(/\s+/g, '')
+    if (!t || t.length < 3 || t.length > 16) return false
+    if (isPrice(t) || NOISE.test(t) || SPEC_ROW.test(t)) return false
+    return /[\u4e00-\u9fff]/.test(t)
+  })
+  let best: { x: number; y: number; matched: string; score: number } | undefined
+  for (const btn of specBtns) {
+    const by = yc(btn)
+    // 菜名通常在「选规格」按钮**左侧同一行**（左对齐菜名、右侧按钮），或紧邻其上一行。
+    const cand = nameWords
+      .map((w) => {
+        const wy = yc(w)
+        const dy = Math.abs(wy - by)
+        // 同行(≤60) 或 按钮上方 60–140
+        const sameRow = dy <= 60
+        const aboveRow = by - wy > 30 && by - wy <= 160
+        if (!sameRow && !aboveRow) return undefined
+        return { w, s: dishMatchScore(w.t.replace(/\s+/g, ''), target), dy }
+      })
+      .filter((x): x is { w: OcrWord; s: number; dy: number } => Boolean(x))
+      .sort((a, b) => b.s - a.s || a.dy - b.dy)
+    const top = cand[0]
+    if (!top) continue
+    if (top.s >= DISH_MATCH_MIN && (!best || top.s > best.score)) {
+      best = {
+        x: Math.round(btn.bbox.x + btn.bbox.w / 2),
+        y: by,
+        matched: top.w.t.replace(/\s+/g, ''),
+        score: top.s,
+      }
+    }
+  }
+  return best
+}
+
+/**
  * 判定当前是否落在「拼单详情」页（饿了么拼单）。
  *
  * 背景（2026-10-26 真机定位）：当某商品已存在**进行中的拼单**时，在店铺页点该菜的「选规格」
@@ -822,9 +884,17 @@ export async function runElemeOcrOnce(
     // 已加购：本次重试无需再点「选规格」，直接去结算。
     words = await nav.waitFor(isCartBar, '购物车栏', 20000, ELEME_ROI.bottomBar)
   } else {
-    const specY = locateFirstDishSpecY(words, L.storeFirstDishSpec.y)
+    // **按目标菜名**定位该菜的「选规格」（绝不点第一个菜：真机实测查询「小炒肉」会误加近名的
+    // 「小炒猪肝/小炒田螺肉」）。匹配不到就如实交人工，绝不乱点近名菜。
+    const dishBtn = locateElemeDishAddTarget(words, cond.item)
+    if (!dishBtn) {
+      throw new NeedsHumanError(
+        'environment',
+        `饿了么店铺页未找到目标菜品「${cond.item}」（菜单里没有该菜或菜名被 OCR 读花）`,
+      )
+    }
     state.specTapped = true
-    await nav.tapAt(words, { x: L.storeFirstDishSpec.x, y: specY }, '首个菜-选规格')
+    await nav.tapAt(words, { x: dishBtn.x, y: dishBtn.y }, `选规格(${dishBtn.matched})`)
     await sleep(2200)
     // 点完「选规格」若落到拼单详情页（无规格弹窗、有「拼单/邀请好友」）→ 立即交人工，绝不重试盲点。
     words = await nav.look()

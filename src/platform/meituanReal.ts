@@ -23,11 +23,13 @@ import {
   amountLeftOfAnchor,
   amountNearLabel,
   buildRows,
+  findDishAddTarget,
   parseMoneyText,
   PRICE_ONLY_RE,
   rowText,
 } from './settleRows.ts'
 import type { RawQuoteFacts } from './types.ts'
+import { NeedsHumanError } from '../core/errors.ts'
 
 // 行/坐标原语已抽到 platform/settleRows.ts（平台共享）；此处 re-export 保持对外 API 不变。
 export {
@@ -405,16 +407,28 @@ function locateStoreItemSpec(
   const itemB = best.n.bounds!
   const itemYc = (itemB[1] + itemB[3]) / 2
 
-  // 门店：商品行上方最近、左对齐、非价格的文本。
-  const above = nodes.filter((n) => {
+  // 门店：**优先按店名形态**（如「江西小炒(盛夏路店)」「XX店/分店」）在菜品行上方找；
+  // 真机上店名常在首道菜之上（gap 200-300），"取最近上方行"会误吸到「买贵必赔」角标 / 「1人份，不辣」规格行
+  // （2026-10-28 真机：storeName 一度是 'x1' / '买贵必赔'）。排除纯价格、`x1` 件数标记、只有数字符号的碎片。
+  const isQtyOrSymbol = (t: string) => /^[x×]\s*\d+$/i.test(t) || !/[\u4e00-\u9fffA-Za-z]/.test(t)
+  const STORE_PAT = /[(（].{0,10}店[)）]|路店|分店|店$/
+  const aboveAll = nodes.filter((n) => {
     const t = (n.text ?? '').trim()
     if (!t || t.length < 2 || t.length > 25 || PRICE_ONLY_RE.test(t) || !n.bounds) return false
+    if (isQtyOrSymbol(t)) return false
     const b = n.bounds
     const yc = (b[1] + b[3]) / 2
     const gap = itemYc - yc
-    return gap > 15 && gap < 220 && b[0] <= itemB[0] + 40
+    return gap > 15 && gap < 620 && b[0] <= itemB[0] + 40
   })
-  above.sort((a, b) => {
+  const storeByName = aboveAll
+    .filter((n) => STORE_PAT.test((n.text ?? '').trim()))
+    .sort((a, b) => {
+      const ya = (a.bounds![1] + a.bounds![3]) / 2
+      const yb = (b.bounds![1] + b.bounds![3]) / 2
+      return Math.abs(itemYc - ya) - Math.abs(itemYc - yb)
+    })
+  const above = aboveAll.sort((a, b) => {
     const ya = (a.bounds![1] + a.bounds![3]) / 2
     const yb = (b.bounds![1] + b.bounds![3]) / 2
     return Math.abs(itemYc - ya) - Math.abs(itemYc - yb)
@@ -440,7 +454,7 @@ function locateStoreItemSpec(
   }
 
   return {
-    storeName: above[0]?.text?.trim(),
+    storeName: (storeByName[0] ?? above[0])?.text?.trim(),
     itemName: best.n.text?.trim(),
     itemText: best.n.text?.trim(),
     itemSpec,
@@ -454,6 +468,58 @@ export function settleAnchors(): UiSelector[] {
     ...MEITUAN_SELECTORS.settleAnchors.map((id) => ({ resourceId: id })),
     ...MEITUAN_SELECTORS.settleTextAnchors.map((text) => ({ text })),
   ]
+}
+
+/**
+ * 判定店铺页购物车是否"已装了有效商品"（非空）。纯函数，供离线回放测试。
+ *
+ * 只认**可靠的"已添加 N 件(N>0)"**信号（真机实证：店铺页底部购物车按钮稳定带此文案）。
+ * 历史坑（2026-10-28 真机）：**不要**用"出现去结算按钮"判非空——首页/店铺底部偶尔有
+ * "2 件失效商品 / 结算0件"这类**陈旧残留**，也会出现"去结算"，会把干净车误判成非空。
+ */
+export function isMeituanCartNonEmpty(nodes: UiNode[]): boolean {
+  for (const n of nodes) {
+    const t = `${n.text ?? ''}${n.label ?? ''}`
+    const m = /已添加\s*(\d+)\s*件/.exec(t)
+    if (m) {
+      const k = Number.parseInt(m[1] ?? '0', 10)
+      if (Number.isFinite(k) && k > 0) return true
+    }
+  }
+  return false
+}
+
+/**
+ * 加购前**购物车判空**守卫（红线）：非空则交人工，绝不自动清空（会删用户自己的商品）。
+ * 在店铺页、按下单按钮前判；调用前流程已 `waitAny(店铺页)`，故直接用 `nav.nodes()` 取最新一帧。
+ */
+async function assertMeituanCartEmpty(nav: Navigator): Promise<void> {
+  const nodes = await nav.nodes()
+  if (isMeituanCartNonEmpty(nodes)) {
+    throw new NeedsHumanError(
+      'environment',
+      '美团购物车非空（店铺页底部「已添加 N 件」）：为避免把多件总额当成单品实付，请先手动清空购物车后重跑',
+    )
+  }
+}
+
+/**
+ * 在店铺页按**目标菜名**定位其「选规格」按钮（绝不点第一个菜）。找不到 → undefined（交人工）。
+ * 先就在当前帧找；找不到再下滚最多 3 屏重找（菜单常需滚动才露出目标菜）。
+ */
+async function locateMeituanDish(
+  nav: Navigator,
+  target: string,
+): Promise<{ x: number; y: number; matched: string; score: number } | undefined> {
+  for (let i = 0; i < 4; i++) {
+    const t = findDishAddTarget(await nav.nodes(), target)
+    if (t) return t
+    if (i < 3) {
+      await nav.swipeUp()
+      await nav.repaint?.()
+    }
+  }
+  return undefined
 }
 
 // ────────────────────────────── 真机流程（走 steps 原语） ──────────────────────────────
@@ -502,16 +568,23 @@ export async function runMeituanReal(
   }
   await nav.waitAny(byTextAny(MEITUAN_SELECTORS.storePageTexts), '店铺页', 20000)
 
-  // 5) 选第一个菜品：优先"选规格"（真机加购入口）；首屏 banner 常把菜单顶到屏外 → 先下滚再找。
-  //    **用最新 dump 重新用文案点击**（滚动后坐标会失效，文案点击每次重新定位才稳）。
-  let hasDish = await nav.hasAny?.(MEITUAN_SELECTORS.dishOpen)
-  for (let i = 0; i < 3 && !hasDish; i++) {
-    await nav.swipeUp()
-    await nav.repaint?.()
-    hasDish = await nav.hasAny?.(MEITUAN_SELECTORS.dishOpen)
+  // 4.5) **购物车必须为空**（2026-10-28 真机，红线级）。美团结算页同样会跨任务/跨重试累积件数；
+  //      加购前若购物车非空，本次再加 1 件 → 结算页「共 N+1 件」，payable 变成多件总额而**算术仍自洽**
+  //      → 静默错价。故这里先判空：非空**如实交人工**（绝不自动清空购物车——那会删掉用户自己的商品）。
+  //      入口判据直接复用店铺页底部购物车条：出现"已添加 N 件"或"去结算"即视为非空。
+  await assertMeituanCartEmpty(nav)
+
+  // 5) **按目标菜名**定位并点它的「选规格」（绝不"点第一个菜"：真机菜单里第一个菜常不是查询词）。
+  //    首屏 banner 常把菜单顶到屏外 → 先下滚再找；每轮用最新 dump 重新定位（滚动后坐标会失效）。
+  const target = await locateMeituanDish(nav, cond.item)
+  if (!target) {
+    throw new NeedsHumanError(
+      'environment',
+      `美团店铺页未找到目标菜品「${cond.item}」（菜单里没有该菜或菜名被页面截断/折叠）`,
+    )
   }
-  if (hasDish) await nav.tap({ text: MEITUAN_SELECTORS.dishOpen[0]! }, '选规格')
-  else await nav.tap({ text: MEITUAN_SELECTORS.addToCart[0]! }, '加入购物车')
+  if (nav.tapPoint) await nav.tapPoint(target.x, target.y, `选规格(${target.matched})`)
+  else await nav.tap({ text: MEITUAN_SELECTORS.dishOpen[0]! }, '选规格')
 
   // 6) 规格弹层 → 加入购物车（等弹层出现；用文案点击，UI 不稳时最多重取数帧）。
   let hasAdd = await nav.hasAny?.(['加入购物车'])

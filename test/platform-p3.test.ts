@@ -16,10 +16,12 @@ import {
   firstActionableCenter,
   firstResultCardCenter,
   isDangerNode,
+  isMeituanCartNonEmpty,
   parseMoneyText,
   runMeituanReal,
   type Navigator,
 } from '../src/platform/meituanReal.ts'
+import { dishMatchScore, findDishAddTarget } from '../src/platform/settleRows.ts'
 import { classifyObstruction } from '../src/device/recover.ts'
 import { parseUiNodes, type UiNode } from '../src/device/uixml.ts'
 import { priceQuote } from '../src/price/engine.ts'
@@ -140,9 +142,15 @@ test('extract: missing payable → confidence low → needsConfirm (OCR gate)', 
 const homeRd = await readFile(join(FIX, 'meituan-home.real-device.xml'), 'utf8')
 const searchRd = await readFile(join(FIX, 'meituan-search.real-device.xml'), 'utf8')
 const resultsRd = await readFile(join(FIX, 'meituan-results.real-device.xml'), 'utf8')
-const storeRd = await readFile(join(FIX, 'meituan-store.real-device.xml'), 'utf8')
 const specRd = await readFile(join(FIX, 'meituan-specsheet.real-device.xml'), 'utf8')
 const storeAddedRd = await readFile(join(FIX, 'meituan-store-added.real-device.xml'), 'utf8')
+// 目标菜（cond.item='香叶 烤鸭饭'）所在的店铺页：含该菜名「选规格」、购物车为空（无去结算/已添加）。
+// 真机 store fixture 是另一家店（木桶饭），与新"按菜名选规格"逻辑不匹配，故用合成帧承载目标菜。
+const storeDishRd = `<hierarchy>
+  <node text="点菜" bounds="[50,800][150,850]" clickable="true" />
+  <node text="香叶烤鸭饭" bounds="[195,930][405,968]" clickable="false" />
+  <node text="选规格" bounds="[1470,925][1590,975]" clickable="true" />
+</hierarchy>`
 
 function flowNavigator(): { nav: Navigator; taps: string[] } {
   const taps: string[] = []
@@ -171,14 +179,15 @@ function flowNavigator(): { nav: Navigator; taps: string[] } {
     },
     tapPoint: async (x, y, what) => {
       taps.push(`point:${what}@${x},${y}`)
-      if (what === '第一家店铺') screen.current = storeRd
+      if (what === '第一家店铺') screen.current = storeDishRd
+      else if (what.startsWith('选规格')) screen.current = specRd
     },
     input: async (_sel, _t, what) => {
       taps.push(`input:${what}`)
     },
     swipeUp: async () => {
       // 店铺页首次下滚越过 banner 后，菜单/规格进入视野。
-      if (screen.current === storeRd) screen.current = storeAddedRd
+      if (screen.current === storeDishRd) screen.current = storeAddedRd
     },
     repaint: async () => {},
     hasAny: async (keywords) => {
@@ -199,7 +208,7 @@ function flowNavigator(): { nav: Navigator; taps: string[] } {
             : what === '搜索结果'
               ? resultsRd
               : what === '店铺页'
-                ? storeRd
+                ? storeDishRd
                 : what === '结算页'
                   ? realDeviceXml
                   : undefined
@@ -504,4 +513,75 @@ test('extractMeituanSettle: 结算页含两道菜各 x1 时，件数应为 2（�
   const facts = extractMeituanSettle(parseUiNodes(xml), cond, xml)
   // 关键：总件数=2（两道菜各 1），而不是只看当前菜品行的 1
   assert.equal(facts.qty, 2)
+})
+
+// ───────────────── 2026-10-28：按目标菜名选规格 + 加购前空车守卫（静默错价防线） ─────────────────
+
+const storeRealXml = await readFile(join(FIX, 'meituan-store.real-device.xml'), 'utf8')
+
+test('dishMatchScore: 精确>包含>相似度；近名菜（田螺 vs 小炒肉）不得越阈值', () => {
+  assert.equal(dishMatchScore('小炒肉木桶饭', '小炒肉木桶饭'), 1)
+  // 前缀包含（如查询是更长菜名的子串）
+  assert.ok(dishMatchScore('香叶·精品烤鸭饭', '烤鸭饭') >= 0.92)
+  // 近名菜：itemScore≈0.9，但 dishMatchScore 也仅 0.9 → 低于 0.92 阈值
+  assert.ok(dishMatchScore('小炒田螺肉木桶饭', '小炒肉木桶饭') < 0.92)
+})
+
+test('findDishAddTarget: 真实店铺页按菜名命中其「选规格」，近名菜不误选、无此菜返回 undefined', () => {
+  const nodes = parseUiNodes(storeRealXml)
+  // 目标菜：小炒肉木桶饭（fixture 中存在）
+  const hit = findDishAddTarget(nodes, '小炒肉木桶饭')
+  assert.ok(hit, '应命中目标菜')
+  assert.equal(hit!.matched, '小炒肉木桶饭')
+  assert.ok(hit!.score >= 0.92)
+  // 命中按钮在屏幕右侧（选规格按钮区）
+  assert.ok(hit!.x > 1000)
+  // 菜单里没有的菜 → undefined（交人工）
+  assert.equal(findDishAddTarget(nodes, '佛跳墙'), undefined)
+})
+
+test('isMeituanCartNonEmpty: 「已添加 N 件(N>0)」→ 非空；仅「去结算」/菜单/促销 → 空（避免陈旧残留误判）', () => {
+  const nonEmpty = parseUiNodes(
+    '<hierarchy><node text="点餐"/><node text="购物车，已添加3件商品，点击查看"/></hierarchy>',
+  )
+  assert.equal(isMeituanCartNonEmpty(nonEmpty), true)
+  // 只有"去结算"（可能是失效残留在首页/店铺底部）→ 不算非空（真机误判防线）
+  const onlyCheckout = parseUiNodes(
+    '<hierarchy><node text="去结算"/><node text="2 件失效商品"/></hierarchy>',
+  )
+  assert.equal(isMeituanCartNonEmpty(onlyCheckout), false)
+  const emptyOnly = parseUiNodes(
+    '<hierarchy><node text="点餐"/><node text="腐竹炒肉木桶饭"/><node text="再买¥8.12，可再减¥2"/></hierarchy>',
+  )
+  assert.equal(isMeituanCartNonEmpty(emptyOnly), false)
+  // "已添加 0 件" 视为空（不误判）
+  const zero = parseUiNodes('<hierarchy><node text="购物车，已添加0件商品"/></hierarchy>')
+  assert.equal(isMeituanCartNonEmpty(zero), false)
+})
+
+test('extractMeituanSettle: 店名不被 x1/规格/角标污染（真实 3 件结算页 → 江西小炒(盛夏路店)）', () => {
+  const xml = `<hierarchy>
+    <node text="江西小炒(盛夏路店)" bounds="[50,1004][310,1046]" />
+    <node text="腐竹炒肉木桶饭" bounds="[195,1081][440,1119]" />
+    <node text="1 人份，不辣" bounds="[195,1124][353,1163]" />
+    <node text="x1" bounds="[195,1163][295,1197]" />
+    <node text="小炒肉木桶饭" bounds="[195,1476][405,1514]" />
+    <node text="1 人份，不辣" bounds="[195,1516][353,1555]" />
+    <node text="x1" bounds="[195,1555][295,1589]" />
+    <node text="买贵必赔" bounds="[206,1227][320,1267]" />
+  </hierarchy>`
+  const c: ComparisonConditions = {
+    snapshotId: 's',
+    item: '小炒肉木桶饭',
+    qty: 1,
+    spec: [],
+    composition: [],
+    deliverTo: { city: '上海', lat: 31.23, lng: 121.47 },
+    fixedAt: '2026-10-27T00:00:00+08:00',
+    hash: 'h',
+  }
+  const facts = extractMeituanSettleFromDump(xml, c)
+  assert.equal(facts.storeName, '江西小炒(盛夏路店)')
+  assert.notEqual(facts.storeName, 'x1')
+  assert.notEqual(facts.storeName, '买贵必赔')
 })
