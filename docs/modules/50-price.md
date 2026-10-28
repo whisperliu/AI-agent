@@ -18,6 +18,7 @@
 - **额度不假精确**：额度字段只用于"排除已知不可用"，**不得断言可用**（§5.5）。
 - **两层校验分离**：`arithmetic`（账平）≠ `extraction`（读得准）；`price/*` 不判定 OCR 质量，只消费其结论（§6.3/§6.3.4）。
 - **等价分组**：`isSameMeal` = 相似度≥0.7 且 composition/数量/规格一致；否则 `comparable=false` 分组不混排（§6.4/§6.6）；`deviatedConditions` 非空强制不可比。
+- **规格归一（跨平台）**：`canonicalSpec` 只去掉「N人份/单人份」这类**不影响同一顿饭**的描述（份量由 `item.qty` 承载），**保留大份/小份等真实差异**；`isSameMeal` 与 `mealKey` 都用它归一 → 同一道菜 美团「1人份，微辣」与 饿了么「微辣」归为同一组（2026-10-28 真机）。
 - **统一输入快照（P4）**：`Quote.snapshotId/snapshotHash` 记录派生来源；`compare` 校验每个 Quote 的 `snapshotHash === query.hash`，不一致则追加 `deviatedConditions`（`snapshot 不一致…`）→ 归不可比组（§6.6）。
 - **策略四态（P4，`strategies.ts`）**：把 `config.platforms.<id>.strategies` 映射为 `OptionalSaving`。配置/本地记账**最多 `presumed`**，绝不断言 `verified`；星期/门槛/日限只用于**降级**为 `known_unavailable`；`autoApplied` 策略 `alreadyIncludedInPayable=true`（不重复扣）。`effectivePrice` 扣减仍统一由 `deductibleSavings`（`verified && !alreadyIncluded && settle_screenshot`）判定。
 - **谨慎互斥（P4）**：`applyCrossPlatformExclusivity` 默认**不互斥**（同卡跨平台可分别享）；仅 `crossPlatformExclusive=true` 的策略，若同一策略（kind+name）在其它平台被 `verified` 使用，则本平台该策略降级 `known_unavailable`（§5.6）。

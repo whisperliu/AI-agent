@@ -304,3 +304,94 @@ test('priceQuote: 拆条优惠(refundedBy) 只扣主条 —— effectivePrice �
   assert.equal(q.payable, 26.9)
   assert.equal(q.effectivePrice, 16.9) // 只扣一次 10
 })
+
+// ───────────────── 2026-10-28：双平台同菜（真机形态）→ 合为同一可比组 ─────────────────
+test('双平台同店同菜、规格表述差异（美团"1人份，微辣" vs 饿了么"微辣"）→ 同一可比组', () => {
+  const mk = (
+    platform: string,
+    spec: string,
+    payable: number,
+    fees: QuoteDraft['fees'],
+    discounts: QuoteDraft['discounts'],
+    conf: 'high' | 'medium',
+  ) =>
+    priceQuote(
+      draft({
+        platform,
+        store: { name: '江西小炒(盛夏路店)', matchedScore: 1 },
+        item: { name: '小炒肉木桶饭', spec, qty: 1, matchedScore: 1 },
+        fees,
+        discounts,
+        payable,
+        extraction: { confidence: conf, byField: { payable: conf === 'high' ? 'tree' : 'ocr' } },
+      }),
+    )
+  const m = mk(
+    'meituan',
+    '1 人份，微辣',
+    29.88,
+    [
+      { kind: 'goods', label: '商品原价', amount: 28.88, source: 'tree' },
+      { kind: 'delivery', label: '配送费', amount: 3.9, source: 'tree' },
+      { kind: 'packing', label: '打包费', amount: 2, source: 'tree' },
+    ],
+    [
+      {
+        kind: 'delivery_waiver',
+        platform: 'meituan',
+        id: 'd',
+        name: '减配送费',
+        amount: 3.9,
+        scope: 'delivery',
+        source: 'tree',
+        autoApplied: true,
+        alreadyIncludedInPayable: true,
+      },
+      {
+        kind: 'promo',
+        platform: 'meituan',
+        id: 'p',
+        name: '满减',
+        amount: 1,
+        scope: 'order',
+        source: 'tree',
+        autoApplied: true,
+        alreadyIncludedInPayable: true,
+      },
+    ],
+    'high',
+  )
+  const e = mk(
+    'eleme',
+    '微辣',
+    9.88,
+    [
+      { kind: 'goods', label: '商品金额', amount: 7.88, source: 'ocr' },
+      { kind: 'packing', label: '打包费', amount: 2, source: 'ocr' },
+      { kind: 'delivery', label: '配送费', amount: 3.9, source: 'ocr' },
+    ],
+    [
+      {
+        kind: 'delivery_waiver',
+        platform: 'eleme',
+        id: 'd2',
+        name: '免配送费',
+        amount: 3.9,
+        scope: 'delivery',
+        source: 'ocr',
+        autoApplied: true,
+        alreadyIncludedInPayable: true,
+      },
+    ],
+    'medium',
+  )
+  const r = compare([m, e], cond(), { taskId: 't-dual', now: NOW })
+  assert.equal(r.groups.length, 1, '两平台同菜应合为一组')
+  assert.equal(r.groups[0]?.comparable, true, r.groups[0]?.quotes && JSON.stringify(r.note))
+  assert.equal(r.groups[0]?.quotes.length, 2)
+  // 饿了么 OCR medium → needsConfirm=true，不作为"可信最低价"；美团 high 被选为可信最低价
+  assert.equal(r.cheapest?.platform, 'meituan')
+  // 组内两条价都展示：饿了么 ¥9.88（更便宜但需复核）／美团 ¥29.88
+  const effs = r.groups[0]!.quotes.map((q) => `${q.platform}:${q.effectivePrice}`).sort()
+  assert.deepEqual(effs, ['eleme:9.88', 'meituan:29.88'])
+})
