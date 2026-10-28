@@ -50,6 +50,13 @@ export interface RawQuoteFacts {
   dump: string
   /** 原始 OCR 逐词结果（P5：留存到 evidence.rawExtraction.ocrBoxes，便于复核/定位）。 */
   ocrWords?: OcrWord[]
+  /**
+   * 加购阶段**已核对命中**的目标菜名（饿了么 OCR 盲导航专用）。
+   * 背景（2026-10-28 真机）：结算页 OCR 常把菜名读花（"小炒肉木桶饭"→"小炒内木情所Y"），
+   * 而加购时点的是**按目标菜名精确匹配命中**的那张卡（弹窗印证即为目标菜）。当结算页菜名识别度/相似度
+   * 低于阈值时，用此已核对值回填 `itemName`——这是"有据的核对结果"，**不是伪造**（未命中则加购前已交人工）。
+   */
+  verifiedItemName?: string
   screenshot?: Uint8Array
 }
 

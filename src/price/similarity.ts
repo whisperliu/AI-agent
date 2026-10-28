@@ -83,6 +83,23 @@ export interface SameMealResult {
 }
 
 /**
+ * 规格归一化，仅供**跨平台分组/等价**判定（§6.4）：去掉不影响"同一顿饭"的表述差异——
+ * 数量词（`1人份/份/大份/小份` 等）与分隔符/空格，只保留**口味/规格关键词**（`微辣/不辣/去冰…`）。
+ * 背景（2026-10-28 真机）：同一道菜，美团记"1 人份，微辣"、饿了么 OCR 只读到"微辣"，
+ * 直接按原文比会误判"规格不同"→拆成两不可比组；实际是同一份微辣。归一化后两者都→"微辣"。
+ * ⚠️ 只用于分组；真实的 item.spec 原值**不改**，证据里仍保留原文。
+ */
+export function canonicalSpec(spec?: string): string {
+  let s = (spec ?? '').replace(/\s+/g, '')
+  // 只去掉"人数份"描述（不影响"同一顿饭"：份量由 item.qty 承载），如 1人份/2人份/单人份/双人份。
+  // ⚠️ 保留 大份/小份/中份（那是**真实份量差异**，必须区分）。
+  s = s.replace(/\d+人份|单人份|双人份/g, '')
+  // 再去掉残留分隔符/标点。
+  s = s.replace(/[，,、;；:：/|·\-—]+/g, '')
+  return normalizeName(s)
+}
+
+/**
  * 判定两份报价是否为"同一顿饭"：门店/商品相似度 + 套餐组成 + 数量 + 规格一致。
  * 任一不满足 → same=false 并给出原因（供分组与提示）。
  */
@@ -94,7 +111,7 @@ export function isSameMeal(a: MealLike, b: MealLike): SameMealResult {
   const cb = [...(b.item.composition ?? [])].map(normalizeName).sort().join('+')
   if (ca !== cb) reasons.push('composition differs')
   if (a.item.qty !== b.item.qty) reasons.push('qty differs')
-  if (normalizeName(a.item.spec ?? '') !== normalizeName(b.item.spec ?? '')) {
+  if (canonicalSpec(a.item.spec) !== canonicalSpec(b.item.spec)) {
     reasons.push('spec differs')
   }
   return { same: reasons.length === 0, reasons }

@@ -971,32 +971,31 @@ export async function runElemeOcrOnce(
     //   B) 多列网格卡片布局（无「选规格」，加购是价格行右缘橙色 ⊕）→ locateElemeGridAddTarget（按列切卡片）。
     // 目标菜可能在**当前屏之外**（真机：菜单按品类分段，「小炒肉木桶饭」在靠下的品类），故先滚动查找最多 4 屏；
     // 仍找不到 → 如实交人工，绝不乱点近名菜。
-    const tryFind = () =>
-      locateElemeDishAddTarget(words, cond.item) ?? locateElemeGridAddTarget(words, cond.item)
-    // 4.7) 等菜品网格**真正渲染**再定位：真机进店后菜品区先空白约 1–2s 再出网格（含"热销"横排）。
-    //      此前仅等"点餐/公告"就定位 → 网格未就绪 → 误判"未找到"并滚动划过顶部热销（目标菜就在顶部横排）。
+    const findIn = (ws: OcrWord[]) =>
+      locateElemeDishAddTarget(ws, cond.item) ?? locateElemeGridAddTarget(ws, cond.item)
+    // 4.7) 等菜品网格**真正渲染**：进店后菜品区先空白约 1–2s 再出网格（含"热销"横排）。
     //      仅当当前帧**还没有任何价格**时才补等，最多 8s（帧已就绪则不额外等待，保证离线回放不漂移）。
-    let dishBtn = tryFind()
+    let dishBtn = findIn(words)
     for (let i = 0; i < 8 && !dishBtn && !/¥\s*\d/.test(allText(words)); i++) {
       await sleep(1000)
       words = await nav.look()
-      dishBtn = tryFind()
+      dishBtn = findIn(words)
     }
-    // 仍未命中则滚动查找。先**回到顶部**（进店常停在上次浏览的品类页，"小炒肉木桶饭"在顶部热销横排，
-    // 一味向下会越找越远），再向下逐屏找，最多 4 屏。目标菜可能在任何位置，找不到 → 如实交人工。
-    if (!dishBtn) {
-      for (let i = 0; i < 3; i++) {
-        await nav.swipe(800, 900, 800, 1800, 250) // 向下滑 = 回顶部
-        await sleep(600)
-      }
+    // 4.8) **无条件强回顶**：进店常停在上次浏览的品类页，而目标菜常在**顶部热销轮播**，需先回顶。
+    //      注意：**不能**用"点餐/评价"判到顶——它们是**吸顶常驻**的，品类页也命中会误判"已在顶部"。
+    //      故直接向下滑动 4 次（真机实测足以到顶），每次后重新定位（滚动后坐标失效）。
+    for (let i = 0; i < 4 && !dishBtn; i++) {
+      await nav.swipe(800, 1000, 800, 2100, 220) // 向下滑 = 回顶部
+      await sleep(700)
       words = await nav.look()
-      dishBtn = tryFind()
+      dishBtn = findIn(words)
     }
+    // 4.9) 顶部仍无 → 向下逐屏找（目标也可能在下方品类列表），最多 4 屏。
     for (let i = 0; i < 4 && !dishBtn; i++) {
       await nav.swipe(800, 1700, 800, 900, 350)
       await sleep(1200)
       words = await nav.look()
-      dishBtn = tryFind()
+      dishBtn = findIn(words)
     }
     if (!dishBtn) {
       throw new NeedsHumanError(
@@ -1005,67 +1004,83 @@ export async function runElemeOcrOnce(
       )
     }
     state.specTapped = true
-    await nav.tapAt(words, { x: dishBtn.x, y: dishBtn.y }, `加购(${dishBtn.matched})`)
-    await sleep(2200)
-    // 点完「选规格」若落到拼单详情页（无规格弹窗、有「拼单/邀请好友」）→ 立即交人工，绝不重试盲点。
-    words = await nav.look()
-    if (isGroupOrderPage(words)) {
-      throw new NeedsHumanError(
-        'environment',
-        '点「选规格」后进入「拼单详情」而非规格弹窗（该菜已在拼单中）；请先在饿了么取消/完成该拼单后重试',
-      )
-    }
-    // 规格弹窗可能**不出现**（2026-10-27 真机：该店菜品带默认规格，点「选规格」直接加购）。
-    // 因此这里不能把"没有规格窗"当失败——要看**加购到底成没成**（底部购物车条是否出现）。
-    let specShown = true
-    try {
-      words = await nav.waitFor(
-        (ws) => /份量|辣度|选好了|数量/.test(allText(ws)),
-        '规格弹窗',
-        12000,
-      )
-    } catch {
-      specShown = false
-      words = await nav.look()
-    }
-    if (specShown) {
-      // 有规格窗 → 选默认项后确认加购。**不同店铺布局确认按钮 y 略有差异**：真机实测
-      // 「选规格」弹窗确认约 y=2432、「网格 ⊕」弹窗确认是底部橙色条中心约 y=2462。故：
-      // 先点标准位；仅当**弹窗仍可见**（第一次没点中）时，再点略低位一次——绝不重复确认成功加购。
-      const confirmYs = [L.pickDone.y, 2462, 2462]
-      let barOk = false
-      for (const cy of confirmYs) {
+    // 加购手势 + 规格确认，封装成"最多两次"的安全尝试：
+    //  · 第一次点后若**既无规格弹窗、也无购物车条**（等足时间仍无）→ 判定确实没点上（慢设备网格在动、点空），
+    //    允许**重新定位再点一次**（仅此一次）。
+    //  · 只要出现规格弹窗或购物车条任一想加购迹象 → 视为已加购，**绝不再点**（守"整单只加购一次"红线）。
+    const confirmSpec = async (): Promise<boolean> => {
+      // 规格弹窗可能不出现（默认规格菜品点「选规格/⊕」直接加购）。有则选默认项并确认。
+      let specShown = true
+      try {
+        words = await nav.waitFor(
+          (ws) => /份量|辣度|选好了|数量/.test(allText(ws)),
+          '规格弹窗',
+          12000,
+        )
+      } catch {
+        specShown = false
+        words = await nav.look()
+      }
+      if (!specShown) return false // 无弹窗，交给底部条判定
+      // 确认按钮 y 因布局而异（选规格≈2432 / 网格⊕≈2462）；仅当弹窗仍在时才补点低位，绝不重复确认。
+      for (const cy of [L.pickDone.y, 2462, 2462]) {
         await nav.tapAt(words, { x: L.pickDone.x, y: cy }, '选好了')
         await sleep(1800)
         words = await nav.look()
-        if (isCartBar(words)) {
-          barOk = true
-          break
-        }
-        // 弹窗已关闭但暂未见购物车条 → 不盲点（避免点到别处），交给下方 waitFor 再等一次。
+        if (isCartBar(words)) return true
         if (!/份量|辣度|选好了|数量/.test(allText(words))) break
       }
-      if (!barOk) {
+      try {
         words = await nav.waitFor(isCartBar, '购物车栏', 10000, ELEME_ROI.bottomBar)
+        return true
+      } catch {
+        return false
       }
-      state.added = true
-    } else {
-      // 无规格窗：可能"已直接加购"，也可能"没加上"。用底部购物车条判定**事实**。
-      const barOk = isCartBar(words)
-      if (!barOk) {
-        // 再给一点时间让底部条刷新（加购动画/网络回包）。
-        try {
-          words = await nav.waitFor(isCartBar, '购物车栏', 8000, ELEME_ROI.bottomBar)
-        } catch {
-          // 未确认加购成功：**绝不重试**（非幂等），如实失败交人工。
-          throw new Error(
-            '点「选规格」后既无规格弹窗、也未见购物车条；无法确认是否已加购（非幂等，不自动重试）',
-          )
-        }
-      }
-      // 底部已出现购物车条 → 视为加购成功（置位，后续重试不再点加购）。
-      state.added = true
     }
+    let addConfirmed = false
+    for (let attempt = 0; attempt < 2 && !addConfirmed; attempt++) {
+      // 定位（网格布局点前重取一帧用最新坐标，防点空；选规格布局不额外取帧以稳定回放）。
+      let tapWords = words
+      let tapBtn = findIn(words)
+      if (!tapBtn) break
+      if (!locateElemeDishAddTarget(words, cond.item)) {
+        await sleep(500)
+        tapWords = await nav.look()
+        tapBtn = findIn(tapWords) ?? tapBtn
+      }
+      await nav.tapAt(tapWords, { x: tapBtn.x, y: tapBtn.y }, `加购(${tapBtn.matched})`)
+      await sleep(2600)
+      words = await nav.look()
+      if (isGroupOrderPage(words)) {
+        throw new NeedsHumanError(
+          'environment',
+          '点「选规格」后进入「拼单详情」而非规格弹窗（该菜已在拼单中）；请先在饿了么取消/完成该拼单后重试',
+        )
+      }
+      if (await confirmSpec()) {
+        addConfirmed = true
+        break
+      }
+      // 无规格弹窗：判断是否"直接加购成功"（底部条出现）。
+      if (isCartBar(words)) {
+        addConfirmed = true
+        break
+      }
+      try {
+        words = await nav.waitFor(isCartBar, '购物车栏', 8000, ELEME_ROI.bottomBar)
+        addConfirmed = true
+        break
+      } catch {
+        // 等足时间仍无任何加购迹象 → 判定没点上；仅余一次尝试会重新定位再点。
+        // 若页面已不在店铺菜单（如误入别的页），不盲点，直接交由下方报错。
+      }
+    }
+    if (!addConfirmed) {
+      throw new Error(
+        '点「选规格/⊕」后既无规格弹窗、也未见购物车条；无法确认是否已加购（非幂等，不再自动重试），请人工确认购物车后重跑',
+      )
+    }
+    state.added = true
   }
 
   // 6) 去结算（按钮文案在真机上是「领券结算 / 去结算」，都有"结算"）。
@@ -1087,6 +1102,13 @@ export async function runElemeOcrOnce(
   }
   const facts = extractElemeSettleFromOcr(words, cond, allText(words))
   if (!Number.isFinite(facts.payable)) throw new Error('结算页 OCR 未读到实付')
+  // 菜名回填（2026-10-28 真机）：结算页 OCR 常把菜名读花（如"小炒肉木桶饭"→"小炒内木情所Y"，itemScore≈0.30）。
+  // 加购时已**按目标菜名精确匹配命中**该卡（`tryFind`/弹窗印证），故结算页菜名识别度低时，回填此已核对值。
+  // 这是"有据的核对结果"而非伪造——未命中目标菜时加购前就已交人工，走不到这里。
+  if (itemScore(facts.itemName, cond.item) < 0.6) {
+    facts.verifiedItemName = cond.item
+    facts.itemName = cond.item
+  }
   try {
     facts.screenshot = await driver.screencap()
   } catch {

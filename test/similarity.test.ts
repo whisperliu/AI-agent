@@ -3,7 +3,13 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isSameMeal, itemScore, normalizeName, storeScore } from '../src/price/similarity.ts'
+import {
+  canonicalSpec,
+  isSameMeal,
+  itemScore,
+  normalizeName,
+  storeScore,
+} from '../src/price/similarity.ts'
 
 const store = (over = {}) => ({ name: '香叶烤鸭', amapId: 'AMAP-1', matchedScore: 0.95, ...over })
 const item = (over = {}) => ({
@@ -101,4 +107,20 @@ test('storeScore: distance >=200m gives NO bonus', () => {
     { name: '香叶烤鸭坊', matchedScore: 0.9 },
   )
   assert.equal(far, nameOnly)
+})
+
+test('canonicalSpec: 数量/份型不参与等价（美团"1 人份，微辣" = 饿了么"微辣"）', () => {
+  assert.equal(canonicalSpec('1 人份，微辣'), canonicalSpec('微辣'))
+  assert.equal(canonicalSpec('2人份、不辣'), canonicalSpec('不辣'))
+  assert.equal(canonicalSpec('大份'), '大份') // 真实份量差异要保留
+  assert.notEqual(canonicalSpec('微辣'), canonicalSpec('不辣')) // 不同口味仍不同
+})
+
+test('isSameMeal: 同店同菜、不同平台规格表述差异（1人份微辣 vs 微辣）→ 同一顿饭', () => {
+  const mk = (spec: string) => ({
+    store: { name: '江西小炒(盛夏路店)', matchedScore: 1 },
+    item: { name: '小炒肉木桶饭', spec, qty: 1, matchedScore: 1 },
+  })
+  const r = isSameMeal(mk('1 人份，微辣'), mk('微辣'))
+  assert.equal(r.same, true, r.reasons.join(','))
 })

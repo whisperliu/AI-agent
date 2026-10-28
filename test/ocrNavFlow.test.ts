@@ -508,10 +508,14 @@ test('网格布局整条走查：无「选规格」时用 ⊕ 加购，只加一
   // 点 ⊕ 后直接加购（无规格弹窗）→ 底部条出现
   const AFTER = [w('点餐', 60, 920), w('¥11.98', 176, 2432), w('券后约', 300, 2432)]
   const CART = [w('去结算', 1453, 2432, 200, 60), w('券后约', 300, 2432)]
-  const SETTLE = [w('合计', 1100, 2400), w('¥11.98', 1240, 2405)]
+  // 结算页菜名读花（"小炒内木情所Y"，与目标 itemScore≈0.30）→ 回填已验证菜名
+  const SETTLE = [w('小炒内木情所Y', 60, 842), w('合计', 1100, 2400), w('¥11.98', 1240, 2405)]
   const { ocr, driver, rec } = makeFake([HOME, SEARCH, RESULT, STORE, AFTER, CART, SETTLE])
   const facts = await runElemeOcrNav(driver, ocr, cond, 1, sleep)
   assert.equal(facts.payable, 11.98)
+  // 结算页菜名糊 → 用加购时已验证的目标菜名回填（非伪造）
+  assert.equal(facts.itemName, '小炒肉木桶饭')
+  assert.equal(facts.verifiedItemName, '小炒肉木桶饭')
   // ⊕ 只点一次，坐标为首列 ⊕（菜名 x0=41 / yTop=1869 + 偏移），不是别列
   const { ELEME_GRID_ADD_OFFSET } = await import('../src/platform/elemeReal.ts')
   const expX = Math.round(41 + ELEME_GRID_ADD_OFFSET.dx)

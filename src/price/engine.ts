@@ -19,7 +19,7 @@ import type {
 } from './model.ts'
 import { deductibleSavings, expectedPayable, round2, toleranceFor } from './schema.ts'
 import { evidenceComplete, isExpired } from './evidence.ts'
-import { isSameMeal, normalizeName } from './similarity.ts'
+import { canonicalSpec, isSameMeal, normalizeName } from './similarity.ts'
 
 const CONF_ORDER: Record<Confidence, number> = { low: 0, medium: 1, high: 2 }
 const minConf = (a: Confidence, b: Confidence): Confidence =>
@@ -93,10 +93,10 @@ export function priceQuote(draft: QuoteDraft): Quote {
   }
 }
 
-/** 分组键：套餐组成 + 数量 + 规格（"同一顿饭"的形态）。 */
+/** 分组键：套餐组成 + 数量 + 规格（"同一顿饭"的形态）。规格用 `canonicalSpec` 归一，避免跨平台表述差异拆组。 */
 export function mealKey(q: Quote): string {
   const comp = [...(q.item.composition ?? [])].map(normalizeName).sort().join('+') || '(none)'
-  const spec = normalizeName(q.item.spec ?? '') || '(default)'
+  const spec = canonicalSpec(q.item.spec) || '(default)'
   return `${comp}|qty=${q.item.qty}|spec=${spec}`
 }
 
