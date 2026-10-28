@@ -173,13 +173,20 @@ export function describeBounds(b: Bounds | undefined): string {
 }
 
 /**
- * 菜品名匹配分（0–1）：**精确命中 > 前缀包含 > 句柄相似度**。
+ * 菜品名匹配分（0–1）：精确 > 主体包含 > 前缀/后缀残留 > 句柄相似度。
  *
  * 背景（2026-10-28 真机，静默错价防线）：平台**必须按查询菜名加购**，不能"点第一个菜"。
- * 但句柄相似度（`similarity.itemScore`）不可靠——实测 `小炒田螺肉木桶饭` 与查询 `小炒肉木桶饭`
- * 共享"小炒/肉/木桶饭"，itemScore 高达 **0.90**，远超常见 0.7 阈值，会误把"田螺肉"当成"小炒肉"。
- * 故这里收紧为：① 归一化后**完全相等** → 1.0；② 一方完整包含另一方（如查询词是"XX木桶饭"的子串）→ 0.92；
- * ③ 其余退回 `similarity.itemScore`（仅用于排序，绝不能仅凭它认定"命中"，调用方须用 ≥0.95 阈值）。
+ * ① 句柄相似度（`similarity.itemScore`）不可靠：`小炒田螺肉木桶饭` vs 查询 `小炒肉木桶饭` 共享
+ *    "小炒/肉/木桶饭"，itemScore 高达 **0.90**（远超常见 0.7 阈值），会误把"田螺肉"当"小炒肉"。
+ * ② OCR 菜名**尾部易花**：真机把 `小炒肉木桶饭` 读成 `小炒肉木人`/`小炒肉木桶镀`（"桶饭"糊成"人/镀"），
+ *    若只做"完整包含"判定会漏掉正确卡片。
+ *
+ * 判定顺序：
+ *  1) 归一化后**完全相等** → 1.0；
+ *  2) **主体包含**：较短者在**去掉尾部 ≤2 字**（OCR 尾噪）后能完整包含较长者的主体 → 0.9（可用于排序，但**低于认定阈值**，
+ *     仅当**较长(候选)包含较短(目标)且差值恰好是尾部 ≤2 字**时才升到 0.93 认命，见下）；
+ *  3) 一方完整包含另一方 → 0.92；
+ *  4) 其余退回 `similarity.itemScore`（仅供排序，绝不单独认定）。
  */
 export function dishMatchScore(candidate: string, target: string): number {
   const c = candidate.replace(/\s+/g, '').toLowerCase()
@@ -187,10 +194,19 @@ export function dishMatchScore(candidate: string, target: string): number {
   if (!c || !t) return 0
   if (c === t) return 1
   if (c.includes(t) || t.includes(c)) return 0.92
+  // OCR 尾噪容错：两者**公共前缀**足够长（≥ max(3, ⌈0.7·较短者⌉)）且**两侧剩余都 ≤2 字**
+  // （如目标"小炒肉木桶饭"被读成"小炒肉木人""小炒肉木桶镀"）。真正不同的菜（"小炒田螺肉木桶饭"）
+  // 公共前缀只有"小炒"(2)，不达标 → 不误认。
+  let cp = 0
+  const minLen = Math.min(c.length, t.length)
+  while (cp < minLen && c[cp] === t[cp]) cp++
+  if (cp >= 3 && cp >= Math.ceil(minLen * 0.7) && c.length - cp <= 2 && t.length - cp <= 2) {
+    return 0.93
+  }
   return itemScore(candidate, target)
 }
 
-/** 认定"就是目标菜"的阈值：只有精确命中(1.0)或前缀包含(0.92)达标；itemScore 的 0.9 不算。 */
+/** 认定"就是目标菜"的阈值：精确(1.0)／完整包含(0.92)／OCR 尾噪容错(0.93) 达标；itemScore 的 0.9 不算。 */
 export const DISH_MATCH_MIN = 0.92
 
 /**

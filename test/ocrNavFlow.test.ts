@@ -439,14 +439,84 @@ test('红线：菜单里没有目标菜 → NeedsHumanError（不乱点近名菜
     w('¥35', 300, 1040),
     w('选规格', 1470, 1000, 120, 50),
   ]
-  const { ocr, driver, rec, reads } = makeFake([HOME, SEARCH, RESULT, STORE])
+  const { ocr, driver, rec } = makeFake([HOME, SEARCH, RESULT, STORE])
   await assert.rejects(
     () => runElemeOcrNav(driver, ocr, cond, 3, sleep), // attempts=3 也不该重试
     (e: unknown) =>
       e instanceof NeedsHumanError &&
       /未找到目标菜品/.test(String(e.hint ?? '') + String(e.message ?? '')),
   )
-  // 没有任何「选规格」点击；4 帧读完即停（非瞬时故障不重试）
-  assert.equal(rec.taps.filter((t) => t.x === 1530).length, 0)
-  assert.equal(reads(), 4)
+  // 关键：没有任何**加购区**点击（菜名/⊕/选规格都在 y>800 的菜单区）；导航 taps 在顶部(y<500)不算。
+  assert.equal(rec.taps.filter((t) => t.y > 800).length, 0)
+  // 非瞬时故障不整条重试：只 launch 一次（attempts=3 不生效）。
+  assert.equal(rec.launch.length, 1)
+})
+
+// ───────────────────── 2026-10-28：网格卡片布局（无「选规格」，橙色 ⊕ 加购） ─────────────────────
+
+test('locateElemeGridAddTarget: 真实三列网格 —— 菜名按列切卡、⊕ 坐标正确、近名菜不误选', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const { locateElemeGridAddTarget, ELEME_GRID_ADD_OFFSET } =
+    await import('../src/platform/elemeReal.ts')
+  const raw = JSON.parse(
+    await readFile(join(import.meta.dirname, 'fixtures', 'eleme-grid.real-ocr.json'), 'utf8'),
+  ) as { words: OcrWord[] }
+  const words = raw.words
+  // 目标「小炒肉木桶饭」被 OCR 读成「小炒肉木桶人」→ 尾噪容错命中第 1 列，⊕ 在 (478,2005)
+  const t = locateElemeGridAddTarget(words, '小炒肉木桶饭')
+  assert.ok(t, '应命中目标菜')
+  assert.ok(t!.score >= 0.92)
+  assert.equal(t!.x, Math.round(41 + ELEME_GRID_ADD_OFFSET.dx))
+  assert.equal(t!.y, Math.round(1846 + ELEME_GRID_ADD_OFFSET.dy))
+  // 第 2/3 列各自命中自己的 ⊕
+  assert.equal(
+    locateElemeGridAddTarget(words, '腐竹炒肉木桶饭')!.x,
+    Math.round(564 + ELEME_GRID_ADD_OFFSET.dx),
+  )
+  assert.equal(
+    locateElemeGridAddTarget(words, '烟笋腊肉木桶饭')!.x,
+    Math.round(1086 + ELEME_GRID_ADD_OFFSET.dx),
+  )
+  // 近名菜（田螺）与不存在 → undefined（交人工，绝不乱加别列）
+  assert.equal(locateElemeGridAddTarget(words, '小炒田螺肉木桶饭'), undefined)
+  assert.equal(locateElemeGridAddTarget(words, '佛跳墙'), undefined)
+})
+
+test('dishMatchScore: OCR 尾噪容忍（小炒肉木人/木桶镀）但近名菜(田螺=0.90)仍被拒', async () => {
+  const { dishMatchScore, DISH_MATCH_MIN } = await import('../src/platform/settleRows.ts')
+  assert.ok(dishMatchScore('小炒肉木人', '小炒肉木桶饭') >= DISH_MATCH_MIN)
+  assert.ok(dishMatchScore('小炒肉木桶镀', '小炒肉木桶饭') >= DISH_MATCH_MIN)
+  assert.ok(dishMatchScore('小炒田螺肉木桶饭', '小炒肉木桶饭') < DISH_MATCH_MIN)
+  assert.ok(dishMatchScore('腐竹炒肉木桶饭', '小炒肉木桶饭') < DISH_MATCH_MIN)
+})
+
+test('网格布局整条走查：无「选规格」时用 ⊕ 加购，只加一次、读出 payable', async () => {
+  const HOME = [w('推荐', 100, 300)]
+  const SEARCH = [w('历史搜索', 100, 200)]
+  const RESULT = [w('销量', 60, 180)]
+  // 店铺页：三列网格（无「选规格」文案），目标菜在首列，名称带 OCR 尾噪
+  const STORE = [
+    w('点餐', 60, 920),
+    w('小炒肉木桶人', 41, 1869),
+    w('腐竹炒肉木桶饭', 564, 1869),
+    w('烟笋腊肉木桶饭', 1086, 1869),
+    w('¥28.88', 41, 1985),
+    w('¥26.98', 564, 1985),
+    w('¥29.98', 1086, 1985),
+  ]
+  // 点 ⊕ 后直接加购（无规格弹窗）→ 底部条出现
+  const AFTER = [w('点餐', 60, 920), w('¥11.98', 176, 2432), w('券后约', 300, 2432)]
+  const CART = [w('去结算', 1453, 2432, 200, 60), w('券后约', 300, 2432)]
+  const SETTLE = [w('合计', 1100, 2400), w('¥11.98', 1240, 2405)]
+  const { ocr, driver, rec } = makeFake([HOME, SEARCH, RESULT, STORE, AFTER, CART, SETTLE])
+  const facts = await runElemeOcrNav(driver, ocr, cond, 1, sleep)
+  assert.equal(facts.payable, 11.98)
+  // ⊕ 只点一次，坐标为首列 ⊕（菜名 x0=41 / yTop=1869 + 偏移），不是别列
+  const { ELEME_GRID_ADD_OFFSET } = await import('../src/platform/elemeReal.ts')
+  const expX = Math.round(41 + ELEME_GRID_ADD_OFFSET.dx)
+  const expY = Math.round(1869 + ELEME_GRID_ADD_OFFSET.dy)
+  const addTaps = rec.taps.filter((t) => t.y === expY)
+  assert.equal(addTaps.length, 1)
+  assert.equal(addTaps[0]!.x, expX)
 })
